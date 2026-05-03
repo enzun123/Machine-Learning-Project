@@ -1,5 +1,5 @@
 """
-KBO 경기 기상 데이터 수집기 v9 (기온/강수량 + 2024/2025 파일 분리 저장)
+KBO 경기 기상 데이터 수집기 v10 (새로운 파일명 적용 및 원본 컬럼 100% 자동 보존)
 """
 
 import requests
@@ -54,15 +54,15 @@ STN_CITY_MAP = {
     159: "부산",
 }
 
-# 입력 파일 목록
-KBO_FILES  = ["kbo_2024_cleaned.csv", "kbo_2025_cleaned.csv"]
+# ★ 새롭게 올려주신 파일명으로 변경
+KBO_FILES  = ["kbo_2024_attendance.csv", "kbo_2025_attendance.csv"]
 CACHE_FILE = "weather_cache.json"
 
 # ══════════════════════════════════════════════════════════════
 #  ② 공통 유틸 함수
 # ══════════════════════════════════════════════════════════════
 def kbo_date_to_yyyymmdd(date_str: str) -> str:
-    return re.sub(r"\D", "", date_str)
+    return re.sub(r"\D", "", str(date_str))
 
 def fetch_category(category: str, date_str: str, stn_id: int) -> dict:
     params = {"tm1": date_str, "tm2": date_str, "stn_id": stn_id, "disp": 1, "help": 1, "authKey": AUTH_KEY}
@@ -127,28 +127,34 @@ def extract_weather(cache_entry: dict) -> dict:
     return result
 
 # ══════════════════════════════════════════════════════════════
-#  ③ 메인 실행 로직 (파일 분리 처리)
+#  ③ 메인 실행 로직
 # ══════════════════════════════════════════════════════════════
 def main():
-    log.info("KBO 경기 기상 데이터 수집 시작 (연도별 파일 분리 모드)")
+    log.info("KBO 기상 데이터 수집 시작 (원본 데이터 자동 보존 방식)")
     
     rows_by_file = {}
     unique_pairs = set()
 
-    # 1. 파일별로 데이터 읽기 및 필요한 관측(날짜, 지점) 목록 수집
+    # 1. 파일별로 데이터 읽기 (원본 컬럼명 파악)
     for fp in KBO_FILES:
         p = Path(fp)
         if p.exists():
             with open(p, encoding="utf-8-sig") as f:
-                rows = list(csv.DictReader(f))
-                rows_by_file[fp] = rows
+                reader = csv.DictReader(f)
+                rows = list(reader)
+                rows_by_file[fp] = {
+                    "fieldnames": reader.fieldnames,
+                    "rows": rows
+                }
                 for r in rows:
                     stn = STADIUM_STN_MAP.get(r.get("구장", "").strip())
-                    if stn:
-                        unique_pairs.add((kbo_date_to_yyyymmdd(r["날짜"]), stn))
+                    # 새 파일은 '경기날짜'를 사용 (만약 예전 파일이면 '날짜' 사용)
+                    date_str = r.get("경기날짜", r.get("날짜", ""))
+                    if stn and date_str:
+                        unique_pairs.add((kbo_date_to_yyyymmdd(date_str), stn))
 
     if not rows_by_file:
-        log.error("처리할 KBO 원본 파일이 없습니다.")
+        log.error("처리할 CSV 파일이 없습니다. 파일명을 확인해주세요.")
         return
 
     unique_pairs = sorted(unique_pairs)
@@ -169,24 +175,29 @@ def main():
     
     save_cache(cache)
 
-    # 3. 파일별로 각각 CSV 저장
+    # 3. 원본 정보 + 기상 정보 결합하여 파일별 저장
     weather_cols = [col for var_map in WEATHER_VARS.values() for col in var_map.values()]
-    all_cols = ["날짜", "요일", "홈", "방문", "구장", "관중수", "지점번호", "관측도시"] + weather_cols
 
-    for fp, kbo_rows in rows_by_file.items():
-        # 파일 이름 변경 로직: kbo_2024_cleaned.csv -> kbo_2024_weather.csv
-        output_file = fp.replace("_cleaned.csv", "_weather.csv")
-        if output_file == fp: 
-            output_file = f"weather_added_{fp}" # 혹시 이름이 다를 경우 대비
+    for fp, data in rows_by_file.items():
+        # 출력 파일 이름 지정: _attendance.csv -> _attendance_weather.csv
+        output_file = fp.replace(".csv", "_weather.csv")
+        
+        # 원본 파일의 컬럼명에 날씨 컬럼을 그대로 이어붙임
+        original_fieldnames = data["fieldnames"]
+        all_cols = original_fieldnames + ["지점번호", "관측도시"] + weather_cols
 
         with open(output_file, "w", encoding="utf-8-sig", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=all_cols)
             writer.writeheader()
-            for row in kbo_rows:
-                stn_id = STADIUM_STN_MAP.get(row.get("구장", "").strip())
-                date_api = kbo_date_to_yyyymmdd(row.get("날짜", "").strip())
+            
+            for row in data["rows"]:
+                stadium = row.get("구장", "").strip()
+                stn_id = STADIUM_STN_MAP.get(stadium)
+                date_str = row.get("경기날짜", row.get("날짜", ""))
+                date_api = kbo_date_to_yyyymmdd(date_str)
                 
-                out = {k: row.get(k, "") for k in ["날짜", "요일", "홈", "방문", "구장", "관중수"]}
+                # 원본 데이터를 그대로 복사한 뒤, 날씨 정보만 추가
+                out = row.copy()
                 out["지점번호"] = stn_id or ""
                 out["관측도시"] = STN_CITY_MAP.get(stn_id, "") if stn_id else ""
                 
