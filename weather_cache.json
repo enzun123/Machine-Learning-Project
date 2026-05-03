@@ -35684,5 +35684,39 @@
       "RN_MAX_10M": "0.4",
       "RN_MAX_10M_OCUR_TMA": "0341"
     }
+  },
+  "20251004_156": {
+    "기온": {
+      "YMD": "20251004",
+      "STN_ID": "156",
+      "LAT": "35.17294",
+      "LON": "126.89156",
+      "ALTD": "70.3",
+      "TA_DAVG": "22.0",
+      "TMX_DD": "26.1",
+      "TMX_OCUR_TMA": "1516",
+      "TMN_DD": "18.9",
+      "TMN_OCUR_TMA": "0008",
+      "MRNG_TMN": "19.1",
+      "MRNG_TMN_OCUR_TMA": "0301",
+      "DYTM_TMX": "26.1",
+      "DYTM_TMX_OCUR_TMA": "1516",
+      "NGHT_TMN": "21.2",
+      "NGHT_TMN_OCUR_TMA": "0246"
+    },
+    "강수": {
+      "TMA": "20251004",
+      "STN_ID": "156",
+      "LAT": "35.17294",
+      "LON": "126.89156",
+      "ALTD": "70.3",
+      "RN_DSUM": "0.7",
+      "RN_MAX_1HR": "0.4",
+      "RN_MAX_1HR_OCUR_TMA": "0000",
+      "RN_MAX_6HR": "1.6",
+      "RN_MAX_6HR_OCUR_TMA": "-999",
+      "RN_MAX_10M": "0.3",
+      "RN_MAX_10M_OCUR_TMA": "0036"
+    }
   }
 }
