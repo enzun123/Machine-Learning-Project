@@ -403,6 +403,6 @@ if __name__ == "__main__":
         print(df.head())
         print(f"총 {len(df)}건의 데이터 수집 완료!")
 
-        file_name = f"kbo_{year}_attendance_real.csv"
+        file_name = f"kbo_{year}_attendance.csv"
         df.to_csv(file_name, index=False, encoding="utf-8-sig")
         print(f"{file_name} 파일이 성공적으로 저장되었습니다.")
