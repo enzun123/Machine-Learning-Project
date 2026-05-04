@@ -1,5 +1,5 @@
 """
-KBO 경기 기상 데이터 수집기 v15 (습도 저장 버그 수정 및 데이터 정밀 매핑)
+KBO 경기 기상 데이터 수집기 v17 (기온/강수/풍속/습도 4종 통합 완결판)
 """
 
 import requests
@@ -10,11 +10,12 @@ import logging
 import re
 import os
 
+# 로그 설정 (진행 상황을 터미널에서 실시간으로 확인 가능)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
 
 # ══════════════════════════════════════════════════════════════
-#  ① 경로 및 환경 설정
+#  ① 경로 및 API 환경 설정
 # ══════════════════════════════════════════════════════════════
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 KBO_FILES = [
@@ -24,12 +25,12 @@ KBO_FILES = [
 CACHE_FILE = os.path.join(BASE_DIR, "weather_cache.json")
 AUTH_KEY = "NtKXD3bRQkCSlw920cJAyA"
 
-# [수정] 기상청 API별 실제 데이터 키 매핑 (이미지 분석 결과 반영)
+# ★ 중요: CSV에 저장될 컬럼명 (사용자 엑셀 화면과 일치시킴)
 WEATHER_VARS = {
-    "기온": {"TA_DAVG": "일평균기온(C)"},        # 특수기호 ° 제외하여 호환성 높임
+    "기온": {"TA_DAVG": "일평균기온(°C)"},
     "강수": {"RN_DSUM": "일합계강수량(mm)"},
     "풍속": {"WS_DAVG": "일평균풍속(m/s)"},
-    "습도": {"RHM_AVG": "일평균상대습도(%)"},    # RHM_DAVG -> RHM_AVG로 수정
+    "습도": {"RHM_AVG": "일평균상대습도(%)"},
 }
 
 API_ENDPOINTS = {
@@ -50,7 +51,7 @@ STADIUM_STN_MAP = {
 STN_CITY_MAP = {108: "서울", 112: "인천", 119: "수원", 133: "대전", 138: "포항", 143: "대구", 152: "울산", 155: "창원", 156: "광주", 159: "부산"}
 
 # ══════════════════════════════════════════════════════════════
-#  ② 유틸리티 함수
+#  ② 데이터 처리 보조 함수
 # ══════════════════════════════════════════════════════════════
 def kbo_date_to_yyyymmdd(date_str):
     return re.sub(r"\D", "", str(date_str))
@@ -58,7 +59,10 @@ def kbo_date_to_yyyymmdd(date_str):
 def clean_weather_value(val):
     if val is None: return ""
     v = str(val).strip()
-    return "" if v in ("-", "-9", "-9.0", "-9.9", "-99.9", "-999", "-999.0", "None", "nan", "=", "-99") else v
+    # 결측치 처리 (-99, -99.9 등 기상청 특유의 결측값 제거)
+    if v in ("-", "-9", "-9.0", "-9.9", "-99.9", "-999", "-999.0", "None", "nan", "=", "-99"):
+        return ""
+    return v
 
 def parse_kma_text(raw_text):
     lines = [ln.strip() for ln in raw_text.splitlines() if ln.strip()]
@@ -81,25 +85,30 @@ def fetch_weather(category, date_str, stn_id):
     except: return {}
 
 # ══════════════════════════════════════════════════════════════
-#  ③ 메인 로직
+#  ③ 메인 실행 로직
 # ══════════════════════════════════════════════════════════════
 def main():
-    # 1. 파일 로드
+    # 1. 원본 파일 존재 확인 및 로드
     files_data = {}
     for fp in KBO_FILES:
         if os.path.exists(fp):
             with open(fp, encoding="utf-8-sig") as f:
                 reader = csv.DictReader(f)
                 files_data[fp] = {"fieldnames": reader.fieldnames, "rows": list(reader)}
-        else: log.error(f"파일 없음: {fp}")
+                log.info(f"파일 로드 완료: {os.path.basename(fp)}")
+        else:
+            log.warning(f"파일을 찾을 수 없습니다: {fp}")
 
-    if not files_data: return
+    if not files_data:
+        log.error("처리할 CSV 파일이 없습니다. 경로와 파일명을 확인해주세요.")
+        return
 
-    # 2. 캐시 로드 및 부족한 데이터 수집
+    # 2. 기존 캐시 불러오기
     cache = {}
     if os.path.exists(CACHE_FILE):
         with open(CACHE_FILE, encoding="utf-8") as f: cache = json.load(f)
 
+    # 3. 누락된 데이터(기온/강수/풍속/습도 중 비어있는 것) 수집
     unique_pairs = set()
     for data in files_data.values():
         for r in data["rows"]:
@@ -111,48 +120,74 @@ def main():
     for idx, (dt, stn) in enumerate(req_list, 1):
         key = f"{dt}_{stn}"
         if key not in cache: cache[key] = {}
-        # 습도 데이터가 JSON에 없는 경우에만 새로 API 호출
-        if "습도" not in cache[key] or not cache[key]["습도"]:
-            log.info(f"  [{idx}/{len(req_list)}] {dt} (지점 {stn}) 습도 수집 중...")
-            res = fetch_weather("습도", dt, stn)
-            if res: cache[key]["습도"] = res
-            time.sleep(0.3)
-            # 캐시 즉시 저장
+        
+        # 4가지 항목 중 하나라도 데이터가 없으면 API 호출 대상
+        missing_cats = [cat for cat in API_ENDPOINTS if cat not in cache[key] or not cache[key][cat]]
+        
+        if missing_cats:
+            log.info(f"  [{idx}/{len(req_list)}] {dt} (지점 {stn}) 부족한 항목 수집: {missing_cats}")
+            for cat in missing_cats:
+                res = fetch_weather(cat, dt, stn)
+                if res: cache[key][cat] = res
+                time.sleep(0.3) # 서버 부하 방지
+            
+            # 한 날짜 수집 끝날 때마다 캐시 파일 업데이트
             with open(CACHE_FILE, "w", encoding="utf-8") as f:
                 json.dump(cache, f, ensure_ascii=False, indent=2)
 
-    # 3. CSV 저장 (강력한 매핑 적용)
+    # 4. CSV 파일로 최종 변환 및 저장
+    log.info("기상 데이터 병합 및 CSV 변환 작업을 시작합니다...")
+    
+    # 엑셀에 들어갈 최종 날씨 컬럼명들
     weather_cols = [c for v in WEATHER_VARS.values() for c in v.values()]
+    
     for fp, data in files_data.items():
         out_path = fp.replace(".csv", "_weather.csv")
-        # 기존 헤더에서 날씨 컬럼이 이미 있다면 중복되지 않게 처리
+        
+        # 헤더 정리: 원본 컬럼 + 지점 정보 + 날씨 4종
+        # (기존에 날씨 컬럼이 이미 있었다면 중복되지 않게 제거 후 재배치)
         base_fields = [f for f in data["fieldnames"] if f not in weather_cols + ["지점번호", "관측도시"]]
-        headers = base_fields + ["지점번호", "관측도시"] + weather_cols
+        final_headers = base_fields + ["지점번호", "관측도시"] + weather_cols
         
         with open(out_path, "w", encoding="utf-8-sig", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=headers)
+            writer = csv.DictWriter(f, fieldnames=final_headers)
             writer.writeheader()
+            
             for r in data["rows"]:
                 stn = STADIUM_STN_MAP.get(r.get("구장", "").strip())
                 dt = kbo_date_to_yyyymmdd(r.get("경기날짜", r.get("날짜", "")))
-                row_out = {k: v for k, v in r.items() if k in headers} # 필요한 컬럼만 복사
-                row_out.update({"지점번호": stn or "", "관측도시": STN_CITY_MAP.get(stn, "") if stn else ""})
                 
+                # 원본 데이터 복사 (날씨 컬럼 제외)
+                row_out = {k: v for k, v in r.items() if k in final_headers}
+                
+                # 지점 정보 추가
+                row_out.update({
+                    "지점번호": stn or "",
+                    "관측도시": STN_CITY_MAP.get(stn, "") if stn else ""
+                })
+                
+                # 캐시에서 4종 날씨 데이터 가져오기
                 c_info = cache.get(f"{dt}_{stn}", {})
                 for cat, v_map in WEATHER_VARS.items():
                     api_data = c_info.get(cat, {})
                     for api_key, out_col in v_map.items():
-                        # 1순위: 지정된 키로 검색
                         val = api_data.get(api_key)
-                        # 2순위: (유연한 검색) 키 이름에 RHM과 AVG가 들어있는지 확인
+                        
+                        # 키 이름이 미세하게 다를 경우(RHM_AVG vs RHM_DAVG 등)를 위한 유연한 검색
                         if val is None:
                             for k in api_data.keys():
-                                if "RHM" in k and "AVG" in k:
-                                    val = api_data[k]
-                                    break
+                                if cat == "습도" and "RHM" in k and "AVG" in k: val = api_data[k]; break
+                                if cat == "기온" and "TA" in k and "AVG" in k: val = api_data[k]; break
+                                if cat == "풍속" and "WS" in k and "AVG" in k: val = api_data[k]; break
+                                if cat == "강수" and "RN" in k and "SUM" in k: val = api_data[k]; break
+                        
                         row_out[out_col] = clean_weather_value(val)
+                
                 writer.writerow(row_out)
-        log.info(f"최종 저장 완료: {os.path.basename(out_path)}")
+        
+        log.info(f"저장 성공: {os.path.basename(out_path)}")
+
+    log.info("모든 작업이 완료되었습니다. 기온, 강수, 풍속, 습도가 모두 포함되었습니다!")
 
 if __name__ == "__main__":
     main()
