@@ -27848,5 +27848,127 @@
       "RHM_MIN": "64.0",
       "RHM_MIN_OCUR_TMA": "1204"
     }
+  },
+  "20240807_108": {
+    "기온": {
+      "YMD": "20240807",
+      "STN_ID": "108",
+      "LAT": "37.57142",
+      "LON": "126.96580",
+      "ALTD": "85.7",
+      "TA_DAVG": "29.6",
+      "TMX_DD": "33.4",
+      "TMX_OCUR_TMA": "1602",
+      "TMN_DD": "27.2",
+      "TMN_OCUR_TMA": "0536",
+      "MRNG_TMN": "27.2",
+      "MRNG_TMN_OCUR_TMA": "0536",
+      "DYTM_TMX": "33.4",
+      "DYTM_TMX_OCUR_TMA": "1602",
+      "NGHT_TMN": "27.1",
+      "NGHT_TMN_OCUR_TMA": "0552"
+    },
+    "강수": {
+      "TMA": "20240807",
+      "STN_ID": "108",
+      "LAT": "37.57142",
+      "LON": "126.96580",
+      "ALTD": "85.7",
+      "RN_DSUM": "3.4",
+      "RN_MAX_1HR": "3.4",
+      "RN_MAX_1HR_OCUR_TMA": "0950",
+      "RN_MAX_6HR": "3.4",
+      "RN_MAX_6HR_OCUR_TMA": "-999",
+      "RN_MAX_10M": "3.2",
+      "RN_MAX_10M_OCUR_TMA": "1014"
+    },
+    "풍속": {
+      "TMA": "20240807",
+      "STN_ID": "108",
+      "LAT": "37.57142",
+      "LON": "126.96580",
+      "ALTD": "85.7",
+      "WS_DAVG": "1.7",
+      "WS_INS_MAX": "6.1",
+      "WS_INS_MAX_OCUR_TMA": "1548",
+      "WD_INS_MAX": "320.0",
+      "WS_MAX": "3.6",
+      "WS_MAX_OCUR_TMA": "1527",
+      "WD_MAX": "290.0",
+      "WD_FRQ": "270.0",
+      "WS_MIX": "1",
+      "WD_MIX": "281.1"
+    },
+    "습도": {
+      "TMA": "20240807",
+      "STN_ID": "108",
+      "LAT": "37.57142",
+      "LON": "126.96580",
+      "ALTD": "85.7",
+      "RHM_AVG": "72.0",
+      "RHM_MIN": "55.0",
+      "RHM_MIN_OCUR_TMA": "1542"
+    }
+  },
+  "20240807_143": {
+    "기온": {
+      "YMD": "20240807",
+      "STN_ID": "143",
+      "LAT": "35.87797",
+      "LON": "128.65296",
+      "ALTD": "54.3",
+      "TA_DAVG": "31.0",
+      "TMX_DD": "36.6",
+      "TMX_OCUR_TMA": "1559",
+      "TMN_DD": "26.5",
+      "TMN_OCUR_TMA": "0450",
+      "MRNG_TMN": "26.5",
+      "MRNG_TMN_OCUR_TMA": "0450",
+      "DYTM_TMX": "36.6",
+      "DYTM_TMX_OCUR_TMA": "1559",
+      "NGHT_TMN": "24.1",
+      "NGHT_TMN_OCUR_TMA": "0422"
+    },
+    "강수": {
+      "TMA": "20240807",
+      "STN_ID": "143",
+      "LAT": "35.87797",
+      "LON": "128.65296",
+      "ALTD": "54.3",
+      "RN_DSUM": "-99.9",
+      "RN_MAX_1HR": "-99.9",
+      "RN_MAX_1HR_OCUR_TMA": "0000",
+      "RN_MAX_6HR": "-99.9",
+      "RN_MAX_6HR_OCUR_TMA": "-999",
+      "RN_MAX_10M": "-99.9",
+      "RN_MAX_10M_OCUR_TMA": "0000"
+    },
+    "풍속": {
+      "TMA": "20240807",
+      "STN_ID": "143",
+      "LAT": "35.87797",
+      "LON": "128.65296",
+      "ALTD": "54.3",
+      "WS_DAVG": "1.6",
+      "WS_INS_MAX": "5.9",
+      "WS_INS_MAX_OCUR_TMA": "1305",
+      "WD_INS_MAX": "290.0",
+      "WS_MAX": "3.3",
+      "WS_MAX_OCUR_TMA": "1213",
+      "WD_MAX": "270.0",
+      "WD_FRQ": "320.0",
+      "WS_MIX": "0",
+      "WD_MIX": "333.0"
+    },
+    "습도": {
+      "TMA": "20240807",
+      "STN_ID": "143",
+      "LAT": "35.87797",
+      "LON": "128.65296",
+      "ALTD": "54.3",
+      "RHM_AVG": "66.8",
+      "RHM_MIN": "37.0",
+      "RHM_MIN_OCUR_TMA": "1550"
+    }
   }
 }
