@@ -4,6 +4,7 @@ import csv
 import time
 import logging
 import re
+from datetime import datetime, timedelta
 from pathlib import Path
 
 # 로깅 설정
@@ -43,12 +44,12 @@ API_ENDPOINTS = {
 STADIUM_STN_MAP = {
     "잠실": 108, "두산": 108, "LG": 108, "고척": 108, "키움": 108,
     "문학": 112, "SSG": 112, "수원": 119, "KT": 119,
-    "대전": 133, "한밭": 133, "한화": 133, "포항": 138,
+    "청주": 131, "대전": 133, "한밭": 133, "한화": 133, "포항": 138,
     "대구": 143, "삼성": 143, "울산": 152, "창원": 155, "NC": 155,
     "광주": 156, "KIA": 156, "사직": 159, "롯데": 159,
 }
 
-STN_CITY_MAP = {108: "서울", 112: "인천", 119: "수원", 133: "대전", 138: "포항", 143: "대구", 152: "울산", 155: "창원", 156: "광주", 159: "부산"}
+STN_CITY_MAP = {108: "서울", 112: "인천", 119: "수원", 131: "청주", 133: "대전", 138: "포항", 143: "대구", 152: "울산", 155: "창원", 156: "광주", 159: "부산"}
 
 # ══════════════════════════════════════════════════════════════
 #  ② 데이터 처리 보조 함수
@@ -63,6 +64,74 @@ def clean_weather_value(val):
     if v in ("-", "-9", "-9.0", "-9.9", "-99.9", "-999", "-999.0", "None", "nan", "=", "-99"):
         return ""
     return v
+
+
+def _extract_fallback_value(api_data, category):
+    """카테고리별 유사 키를 탐색해 값을 보완 추출."""
+    if not api_data:
+        return None
+    for k, v in api_data.items():
+        if category == "습도" and "RHM" in k and "AVG" in k:
+            return v
+        if category == "기온" and "TA" in k and "AVG" in k:
+            return v
+        if category == "풍속" and "WS" in k and "AVG" in k:
+            return v
+        if category == "강수" and "RN" in k and "SUM" in k:
+            return v
+    return None
+
+
+def impute_humidity_from_neighbors(cache, date_str, stn_id, max_days=7):
+    """
+    습도 결측 시 같은 지점의 전/후 날짜 값을 탐색해 보간.
+    - 양쪽 값이 있으면 평균
+    - 한쪽만 있으면 해당 값 사용
+    """
+    if not date_str or not stn_id:
+        return ""
+
+    try:
+        base = datetime.strptime(date_str, "%Y%m%d")
+    except ValueError:
+        return ""
+
+    prev_val, next_val = None, None
+
+    for offset in range(1, max_days + 1):
+        prev_dt = (base - timedelta(days=offset)).strftime("%Y%m%d")
+        next_dt = (base + timedelta(days=offset)).strftime("%Y%m%d")
+
+        if prev_val is None:
+            prev_info = cache.get(f"{prev_dt}_{stn_id}", {}).get("습도", {})
+            raw = _extract_fallback_value(prev_info, "습도")
+            cleaned = clean_weather_value(raw)
+            if cleaned != "":
+                try:
+                    prev_val = float(cleaned)
+                except ValueError:
+                    pass
+
+        if next_val is None:
+            next_info = cache.get(f"{next_dt}_{stn_id}", {}).get("습도", {})
+            raw = _extract_fallback_value(next_info, "습도")
+            cleaned = clean_weather_value(raw)
+            if cleaned != "":
+                try:
+                    next_val = float(cleaned)
+                except ValueError:
+                    pass
+
+        if prev_val is not None and next_val is not None:
+            break
+
+    if prev_val is not None and next_val is not None:
+        return f"{(prev_val + next_val) / 2:.1f}"
+    if prev_val is not None:
+        return f"{prev_val:.1f}"
+    if next_val is not None:
+        return f"{next_val:.1f}"
+    return ""
 
 def parse_kma_text(raw_text):
     lines = [ln.strip() for ln in raw_text.splitlines() if ln.strip()]
@@ -164,12 +233,12 @@ def main():
                     for api_key, out_col in v_map.items():
                         val = api_data.get(api_key)
                         if val is None: # 유연한 키 검색
-                            for k in api_data.keys():
-                                if cat == "습도" and "RHM" in k and "AVG" in k: val = api_data[k]; break
-                                if cat == "기온" and "TA" in k and "AVG" in k: val = api_data[k]; break
-                                if cat == "풍속" and "WS" in k and "AVG" in k: val = api_data[k]; break
-                                if cat == "강수" and "RN" in k and "SUM" in k: val = api_data[k]; break
-                        row_out[out_col] = clean_weather_value(val)
+                            val = _extract_fallback_value(api_data, cat)
+                        cleaned_val = clean_weather_value(val)
+                        # 수원 2건처럼 원천 습도 누락인 경우 전/후 날짜로 보간
+                        if cat == "습도" and cleaned_val == "":
+                            cleaned_val = impute_humidity_from_neighbors(cache, dt, stn)
+                        row_out[out_col] = cleaned_val
                 writer.writerow(row_out)
         
         log.info(f"완료되었습니다: {out_path.name}")
