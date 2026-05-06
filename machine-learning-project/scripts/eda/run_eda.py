@@ -101,17 +101,17 @@ def plot_categorical(df: pd.DataFrame) -> tuple[pd.Series, pd.Series, pd.Series]
 
     fig, axes = plt.subplots(1, 3, figsize=(22, 6))
     sns.boxplot(data=df, x="요일", y="관중수", order=WEEKDAY_ORDER, ax=axes[0], color="#48C9B0")
-    axes[0].set_title("요일별 관중 수 박스플롯")
+    axes[0].set_title("요일별 관중 수")
 
     sns.boxplot(data=df, x="홈팀", y="관중수", order=team_mean.index, ax=axes[1], color="#BB8FCE")
-    axes[1].set_title("홈팀별 관중 수 박스플롯")
+    axes[1].set_title("홈팀별 관중 수")
     axes[1].tick_params(axis="x", rotation=45)
 
     sns.boxplot(data=df, x="구장", y="관중수", order=stadium_mean.index, ax=axes[2], color="#F8C471")
-    axes[2].set_title("구장별 관중 수 박스플롯")
+    axes[2].set_title("구장별 관중 수")
     axes[2].tick_params(axis="x", rotation=45)
     fig.tight_layout()
-    fig.savefig(FIG_DIR / "03_categorical_boxplots.png", dpi=150)
+    fig.savefig(FIG_DIR / "03_categorical_boxplot.png", dpi=150)
     plt.close(fig)
 
     return weekday_mean, team_mean, stadium_mean
@@ -152,7 +152,7 @@ def plot_weather(df: pd.DataFrame) -> tuple[pd.Series, dict[str, float]]:
     sns.boxplot(data=tmp, x="비여부", y="관중수", order=["무강수(0mm)", "비(>0mm)"], ax=ax, color="#3498DB")
     ax.set_title("강수 여부별 관중 수 비교")
     fig.tight_layout()
-    fig.savefig(FIG_DIR / "06_rainy_vs_non_rainy_boxplot.png", dpi=150)
+    fig.savefig(FIG_DIR / "06_rainy_vs_non_rainy.png", dpi=150)
     plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(9, 6))
