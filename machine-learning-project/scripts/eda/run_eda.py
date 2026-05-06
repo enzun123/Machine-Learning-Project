@@ -111,7 +111,7 @@ def plot_categorical(df: pd.DataFrame) -> tuple[pd.Series, pd.Series, pd.Series]
     axes[2].set_title("구장별 관중 수")
     axes[2].tick_params(axis="x", rotation=45)
     fig.tight_layout()
-    fig.savefig(FIG_DIR / "03_categorical_boxplot.png", dpi=150)
+    fig.savefig(FIG_DIR / "03_categorical_boxplots.png", dpi=150)
     plt.close(fig)
 
     return weekday_mean, team_mean, stadium_mean
