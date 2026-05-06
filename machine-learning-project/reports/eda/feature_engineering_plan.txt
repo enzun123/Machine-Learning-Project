@@ -1,0 +1,79 @@
+KBO 관중수 예측 - EDA 기반 피처엔지니어링 핸드오프
+
+[1] 목적
+- EDA 결과를 기반으로 모델링 단계에서 사용할 파생변수 후보를 확정하고,
+  타깃 누수 없이 재현 가능한 피처 생성 규칙을 공유한다.
+
+[2] 사용 데이터/파일
+- 원천 데이터: data/processed/final_dataset.csv
+- 구장 수용인원: data/external/kbo_stadium_info.csv
+- EDA 코드: scripts/eda/run_eda.py
+- 주요 시각화:
+  - reports/eda/figures/01_target_attendance_distribution.png
+  - reports/eda/figures/02_categorical_barplots.png
+  - reports/eda/figures/03_categorical_boxplots.png
+  - reports/eda/figures/04_stadium_capacity_ratio.png
+  - reports/eda/figures/05_weather_correlation_heatmap.png
+  - reports/eda/figures/06_rainy_vs_non_rainy_boxplot.png
+  - reports/eda/figures/07_temperature_scatter.png
+
+[3] EDA 핵심 인사이트 요약
+- 요일/팀/구장에 따른 관중수 차이가 존재한다.
+- 비(강수량 > 0) 조건에서 평균 관중수가 감소하는 경향이 확인된다.
+- 기상 단일 변수의 선형 상관은 전반적으로 약함(복합효과/상호작용 가능성).
+- 구장 규모(최대수용인원)는 관중 상한을 설명하는 보조 정보로 유효하다.
+- 구장명 alias는 통합하여 사용:
+  - 한밭 -> 대전
+
+[4] 우선 적용 파생변수 (권장 1차)
+1) is_rain
+   - 정의: 일합계강수량(mm) > 0 이면 1, 아니면 0
+
+2) rain_bucket
+   - 정의 예시: {0, (0,1], (1,5], (5,inf)}
+
+3) is_weekend
+   - 정의: 요일 in {토, 일} 이면 1, 아니면 0
+
+4) weekday encoding
+   - 방식: one-hot 또는 cyclical(sin/cos) 중 하나 선택
+
+5) stadium_capacity
+   - 정의: 구장 기준 최대수용인원 조인
+   - 주의: 구장명 alias(한밭->대전) 통일 후 조인
+
+6) temperature features
+   - temp_bucket 예시: (<10), [10,20), [20,25), [25,30), (>=30)
+   - is_hot: 일평균기온 >= 30 이면 1
+
+7) humidity/wind buckets
+   - humidity_bucket, wind_bucket 구간화 변수
+
+[5] 2차 확장 변수 (모델 성능 개선용)
+- weekend_x_rain
+- team_x_weekday
+- stadium_x_rain
+- month/ISO-week seasonality features
+
+[6] 타깃 누수 방지 규칙 (필수)
+- 아래 변수는 분석용으로만 사용하고 학습 피처에서 제외:
+  - occupancy_rate = 관중수 / 최대수용인원
+  - 관중수를 직접 포함/변형한 모든 변수
+
+[7] 피처 생성 구현 규칙
+- 학습(train)과 추론(predict/UI)에서 동일 로직 사용
+- 컬럼명, 타입, 순서 고정(피처 스키마 문서화)
+- 결측 처리 규칙 고정(예: 강수 결측 0)
+- 범주형 미등록값(신규 팀명/구장명) 처리 전략 포함
+
+[8] 모델링 팀 전달 권장 체크리스트
+- [ ] train/valid/test 시간 분리 기준 확정
+- [ ] 최종 피처 리스트(1차) 확정
+- [ ] 인코딩 방식 확정(one-hot vs cyclical)
+- [ ] 누수 변수 제외 확인
+- [ ] 학습/예측 공통 전처리 파이프라인 구성
+- [ ] 모델 입력 스키마 문서 저장
+
+[9] 참고
+- 현재 모델링 스크립트(train_model.py, evaluate_model.py, predict.py)는 비어 있으므로,
+  피처 스키마 확정 후 파이프라인 우선 구현 권장.
