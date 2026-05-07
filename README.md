@@ -1,7 +1,7 @@
-# 🛠️ feat/feature-engineering
+# ⚾ KBO 관람 수요 예측 프로젝트
 
-## 📌 브랜치 목적
-EDA 인사이트를 바탕으로 학습용 최종 데이터셋(`kbo_train_ready.csv`)을 생성합니다.
+## 📌 개요
+기상 데이터와 경기 데이터를 결합해 관중 수요를 예측하고, 운영 최적화 인사이트를 제공하는 프로젝트입니다.
 
 ## 🚀 전체 코드 실행순서
 1. `feat/scraping-kbo`
@@ -9,14 +9,26 @@ EDA 인사이트를 바탕으로 학습용 최종 데이터셋(`kbo_train_ready.
 3. `feat/preprocessing`
 4. `feat/eda`
 5. `feat/feature-engineering`
-6. `feat/streamlit-ui`
 
-## 🚀 바로 실행하기
-아래 패키지를 설치한 후 피처 엔지니어링 스크립트를 실행하세요.
-
+## 📦 기본 패키지 설치
 ```bash
-# 1) 필수 패키지 설치
-pip install pandas numpy
+pip install pandas numpy matplotlib seaborn requests selenium beautifulsoup4 webdriver-manager
+```
 
-# 2) 실행 (README.md가 있는 루트 기준)
+## ▶ 대표 실행 명령
+```bash
+# 관중 데이터 스크래핑
+python machine-learning-project/scripts/data_collection/kbo_scraping.py
+
+# 기상 데이터 연동
+python machine-learning-project/scripts/data_collection/weather_api.py
+
+# 전처리
+python machine-learning-project/scripts/preprocessing/preprocess_attendance_weather.py
+
+# EDA
+python machine-learning-project/scripts/eda/run_eda.py
+
+# 피처 엔지니어링
 python machine-learning-project/scripts/features/build_features.py
+```
