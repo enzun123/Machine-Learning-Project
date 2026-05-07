@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import re
 import time
+from pathlib import Path
 import pandas as pd
 from bs4 import BeautifulSoup
 from selenium import webdriver
@@ -15,6 +16,9 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import Select
 from webdriver_manager.chrome import ChromeDriverManager
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+RAW_DIR = PROJECT_ROOT / "data" / "raw"
 
 # 구장명(부분 일치) → 기상·지역 데이터 조인용 키
 STADIUM_TO_REGION_KEY: dict[str, str] = {
@@ -387,6 +391,7 @@ def raw_rows_to_dataframe(rows: list[list[str]]) -> pd.DataFrame:
 
 
 if __name__ == "__main__":
+    RAW_DIR.mkdir(parents=True, exist_ok=True)
     target_years = [2024, 2025]
 
     scraped_data_dict = scrape_kbo_attendance(target_years)
@@ -403,6 +408,6 @@ if __name__ == "__main__":
         print(df.head())
         print(f"총 {len(df)}건의 데이터 수집 완료!")
 
-        file_name = f"kbo_{year}_attendance.csv"
-        df.to_csv(file_name, index=False, encoding="utf-8-sig")
-        print(f"{file_name} 파일이 성공적으로 저장되었습니다.")
+        file_path = RAW_DIR / f"kbo_{year}_attendance.csv"
+        df.to_csv(file_path, index=False, encoding="utf-8-sig")
+        print(f"{file_path} 파일이 성공적으로 저장되었습니다.")

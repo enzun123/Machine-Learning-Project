@@ -4,15 +4,16 @@ import pandas as pd
 from pathlib import Path
 
 
-ROOT_DIR = Path(__file__).resolve().parent.parent
+ROOT_DIR = Path(__file__).resolve().parents[2]
 INPUT_FILES = [
-    ROOT_DIR / "weather_api" / "kbo_2024_attendance_weather.csv",
-    ROOT_DIR / "weather_api" / "kbo_2025_attendance_weather.csv",
+    ROOT_DIR / "data" / "interim" / "kbo_2024_attendance_weather.csv",
+    ROOT_DIR / "data" / "interim" / "kbo_2025_attendance_weather.csv",
 ]
-OUTPUT_FILE = ROOT_DIR / "kbo_attendance_weather_preprocessed.csv"
+OUTPUT_FILE = ROOT_DIR / "data" / "processed" / "final_dataset.csv"
 
 
 def main() -> None:
+    OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
     frames = [pd.read_csv(path, encoding="utf-8-sig") for path in INPUT_FILES]
     df = pd.concat(frames, ignore_index=True)
 
