@@ -6,6 +6,14 @@ KBO 구장별 최대 수용인원 데이터를 정리하고, 모델링 전처리
 ## 🚀 바로 실행하기
 아래 패키지를 설치한 후 구장 정보 생성 스크립트를 실행하세요.
 
+## 🚀 전체 코드 실행순서
+1. `feat/scraping-kbo`
+2. `feat/weather-api`
+3. `feat/preprocessing`
+4. `feat/eda`
+5. `feat/feature-engineering`
+6. `feat/streamlit-ui`
+
 ```bash
 # 1) 데이터 처리 필수 패키지 설치
 pip install pandas
