@@ -9,7 +9,6 @@
 3. `feat/preprocessing`
 4. `feat/eda`
 5. `feat/feature-engineering`
-6. `feat/streamlit-ui`
 
 ## 🚀 바로 실행하기
 아래 패키지를 설치한 후 API 호출 스크립트를 실행하세요.
@@ -20,3 +19,4 @@ pip install pandas requests
 
 # 2) 기상 데이터 호출 실행
 python machine-learning-project/scripts/data_collection/weather_api.py
+```

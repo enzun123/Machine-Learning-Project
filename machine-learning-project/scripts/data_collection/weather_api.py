@@ -14,15 +14,18 @@ log = logging.getLogger(__name__)
 # ══════════════════════════════════════════════════════════════
 #  ① 경로 및 API 환경 설정 (pathlib 적용)
 # ══════════════════════════════════════════════════════════════
-# 현재 파이썬 파일의 위치를 기준으로 경로를 자동 계산합니다.
-BASE_DIR = Path(__file__).resolve().parent
+# 현재 파이썬 파일 위치를 기준으로 프로젝트 경로를 계산합니다.
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+RAW_DIR = PROJECT_ROOT / "data" / "raw"
+INTERIM_DIR = PROJECT_ROOT / "data" / "interim"
+EXTERNAL_DIR = PROJECT_ROOT / "data" / "external"
 
 # 파일 경로들을 Path 객체로 안전하게 생성
 KBO_FILES = [
-    BASE_DIR / "kbo_2024_attendance.csv",
-    BASE_DIR / "kbo_2025_attendance.csv"
+    RAW_DIR / "kbo_2024_attendance.csv",
+    RAW_DIR / "kbo_2025_attendance.csv"
 ]
-CACHE_FILE = BASE_DIR / "weather_cache.json"
+CACHE_FILE = EXTERNAL_DIR / "weather_cache.json"
 
 AUTH_KEY = "NtKXD3bRQkCSlw920cJAyA"
 
@@ -157,7 +160,9 @@ def fetch_weather(category, date_str, stn_id):
 #  ③ 메인 실행 로직
 # ══════════════════════════════════════════════════════════════
 def main():
-    log.info(f"작업 디렉토리 확인: {BASE_DIR}")
+    log.info(f"프로젝트 루트 확인: {PROJECT_ROOT}")
+    INTERIM_DIR.mkdir(parents=True, exist_ok=True)
+    EXTERNAL_DIR.mkdir(parents=True, exist_ok=True)
     
     # 1. 원본 파일 로드
     files_data = {}
@@ -211,7 +216,7 @@ def main():
     # 4. CSV 병합 저장
     weather_cols = [c for v in WEATHER_VARS.values() for c in v.values()]
     for fp, data in files_data.items():
-        out_path = fp.parent / fp.name.replace(".csv", "_weather.csv")
+        out_path = INTERIM_DIR / fp.name.replace(".csv", "_weather.csv")
         
         base_fields = [f for f in data["fieldnames"] if f not in weather_cols + ["지점번호", "관측도시"]]
         final_headers = base_fields + ["지점번호", "관측도시"] + weather_cols
