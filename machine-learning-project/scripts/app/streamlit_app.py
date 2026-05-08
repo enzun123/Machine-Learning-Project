@@ -1,53 +1,69 @@
+# streamlit_app.py
+
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 
 # =========================
-# ±âº» ¼³Á¤
+# í•œê¸€ í°íŠ¸ ì„¤ì • (Mac)
+# =========================
+plt.rcParams["font.family"] = "AppleGothic"
+plt.rcParams["axes.unicode_minus"] = False
+
+# =========================
+# ê¸°ë³¸ ì„¤ì •
 # =========================
 st.set_page_config(
-    page_title="KBO °ü¶÷ ¼ö¿ä ¿¹Ãø ½Ã½ºÅÛ",
+    page_title="KBO ê´€ëŒ ìˆ˜ìš” ì˜ˆì¸¡ ì‹œìŠ¤í…œ",
     layout="wide"
 )
 
 # =========================
-# µ¥ÀÌÅÍ ºÒ·¯¿À±â
+# ë°ì´í„° ë¶ˆëŸ¬ì˜¤ê¸°
 # =========================
 @st.cache_data
 def load_data():
     df = pd.read_csv("kbo_2025_attendance_weather.csv")
-    df["°æ±â³¯Â¥"] = pd.to_datetime(df["°æ±â³¯Â¥"], errors="coerce")
-    df["ÀÏÇÕ°è°­¼ö·®(mm)"] = df["ÀÏÇÕ°è°­¼ö·®(mm)"].fillna(0)
+
+    df["ê²½ê¸°ë‚ ì§œ"] = pd.to_datetime(
+        df["ê²½ê¸°ë‚ ì§œ"],
+        errors="coerce"
+    )
+
+    df["ì¼í•©ê³„ê°•ìˆ˜ëŸ‰(mm)"] = df["ì¼í•©ê³„ê°•ìˆ˜ëŸ‰(mm)"].fillna(0)
+
     return df
 
 df = load_data()
 
 # =========================
-# °æ±âÀå ¼ö¿ë ÀÎ¿ø
+# ê²½ê¸°ì¥ ìˆ˜ìš© ì¸ì›
 # =========================
 capacity_dict = {
-    "Àá½Ç": 23750,
-    "°íÃ´": 16000,
-    "¹®ÇĞ": 23000,
-    "»çÁ÷": 22758,
-    "´ë±¸": 24000,
-    "±¤ÁÖ": 20500,
-    "´ëÀü": 13000,
-    "Ã¢¿ø": 22112,
-    "¼ö¿ø": 20000
+    "ì ì‹¤": 23750,
+    "ê³ ì²™": 16000,
+    "ë¬¸í•™": 23000,
+    "ì‚¬ì§": 22758,
+    "ëŒ€êµ¬": 24000,
+    "ê´‘ì£¼": 20500,
+    "ëŒ€ì „": 13000,
+    "ì°½ì›": 22112,
+    "ìˆ˜ì›": 20000
 }
 
 def get_capacity(stadium_name):
     for key, value in capacity_dict.items():
         if key in str(stadium_name):
             return value
+
     return 20000
 
 # =========================
-# CSS µğÀÚÀÎ
+# CSS ìŠ¤íƒ€ì¼
 # =========================
 st.markdown("""
 <style>
+
 .stApp {
     background-color: #07111f;
     color: white;
@@ -78,8 +94,8 @@ st.markdown("""
 }
 
 .predict-box {
-    border: 1px dashed #1ddcff;
-    border-radius: 12px;
+    border: 1px dashed #18e6ff;
+    border-radius: 14px;
     padding: 45px;
     text-align: center;
     margin-top: 20px;
@@ -95,7 +111,7 @@ st.markdown("""
 
 .predict-number {
     color: #18e6ff;
-    font-size: 64px;
+    font-size: 62px;
     font-weight: 900;
 }
 
@@ -103,9 +119,8 @@ st.markdown("""
     background-color: #101d2d;
     border: 1px solid #263f5c;
     border-radius: 15px;
-    padding: 28px;
+    padding: 25px;
     text-align: center;
-    min-height: 130px;
 }
 
 .card-title {
@@ -130,7 +145,7 @@ st.markdown("""
     background-color: #0f3425;
     border: 1px solid #2ecc71;
     border-radius: 15px;
-    padding: 28px;
+    padding: 25px;
     color: white;
 }
 
@@ -138,7 +153,7 @@ st.markdown("""
     background-color: #3c3414;
     border: 1px solid #f1c40f;
     border-radius: 15px;
-    padding: 28px;
+    padding: 25px;
     color: white;
 }
 
@@ -146,7 +161,7 @@ st.markdown("""
     background-color: #3b1116;
     border: 1px solid #ff4b5c;
     border-radius: 15px;
-    padding: 28px;
+    padding: 25px;
     color: white;
 }
 
@@ -154,197 +169,370 @@ st.markdown("""
     background-color: #101d2d;
     border: 1px solid #263f5c;
     border-radius: 10px;
-    padding: 14px;
+    padding: 15px;
     color: #b8c7d9;
     margin-top: 20px;
 }
+
 </style>
 """, unsafe_allow_html=True)
 
 # =========================
-# »çÀÌµå¹Ù ÀÔ·Â
+# ì‚¬ì´ë“œë°”
 # =========================
-st.sidebar.markdown("## ? KBO Attendance Predictor")
-st.sidebar.markdown("**v1.0**")
-st.sidebar.markdown("---")
-st.sidebar.markdown("### ? °æ±â Á¤º¸ ÀÔ·Â")
+st.sidebar.title("âš¾ KBO Attendance Predictor")
 
-game_date = st.sidebar.date_input("°æ±â ³¯Â¥")
+game_date = st.sidebar.date_input("ê²½ê¸° ë‚ ì§œ")
 
 home_team = st.sidebar.selectbox(
-    "È¨ÆÀ",
-    sorted(df["È¨ÆÀ"].dropna().unique())
+    "í™ˆíŒ€",
+    sorted(df["í™ˆíŒ€"].dropna().unique())
 )
 
 away_team = st.sidebar.selectbox(
-    "¿øÁ¤ÆÀ",
-    sorted(df["¹æ¹®ÆÀ"].dropna().unique())
+    "ì›ì •íŒ€",
+    sorted(df["ë°©ë¬¸íŒ€"].dropna().unique())
 )
 
 stadium = st.sidebar.selectbox(
-    "°æ±âÀå",
-    sorted(df["±¸Àå"].dropna().unique())
+    "ê²½ê¸°ì¥",
+    sorted(df["êµ¬ì¥"].dropna().unique())
 )
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("### ? ¿¹»ó ³¯¾¾")
 
-temperature = st.sidebar.slider("¿¹»ó ±â¿Â(¡É)", -10, 40, 23)
-rainfall = st.sidebar.slider("¿¹»ó °­¼ö·®(mm)", 0.0, 50.0, 0.0)
-humidity = st.sidebar.slider("¿¹»ó ½Àµµ(%)", 0, 100, 60)
+temperature = st.sidebar.slider(
+    "ì˜ˆìƒ ê¸°ì˜¨(â„ƒ)",
+    -10,
+    40,
+    23
+)
 
-predict_btn = st.sidebar.button("? °üÁß ¼ö ¿¹ÃøÇÏ±â", use_container_width=True)
+rainfall = st.sidebar.slider(
+    "ì˜ˆìƒ ê°•ìˆ˜ëŸ‰(mm)",
+    0.0,
+    50.0,
+    0.0
+)
+
+humidity = st.sidebar.slider(
+    "ì˜ˆìƒ ìŠµë„(%)",
+    0,
+    100,
+    60
+)
 
 # =========================
-# ÀÓ½Ã ¿¹Ãø ·ÎÁ÷
-# ³ªÁß¿¡ ÇĞ½À ¸ğµ¨ ¿¬°á ½Ã ÀÌ ºÎºĞ¸¸ model.predict()·Î ±³Ã¼
+# ì„ì‹œ ì˜ˆì¸¡ ë¡œì§
 # =========================
 base_df = df[
-    (df["È¨ÆÀ"] == home_team) |
-    (df["¹æ¹®ÆÀ"] == away_team) |
-    (df["±¸Àå"] == stadium)
+    (df["êµ¬ì¥"] == stadium)
 ]
 
 if len(base_df) > 0:
-    predicted_attendance = int(base_df["°üÁß¼ö"].mean())
+    predicted_attendance = int(
+        base_df["ê´€ì¤‘ìˆ˜"].mean()
+    )
 else:
-    predicted_attendance = int(df["°üÁß¼ö"].mean())
+    predicted_attendance = int(
+        df["ê´€ì¤‘ìˆ˜"].mean()
+    )
 
-# ³¯¾¾ º¸Á¤
+# ë‚ ì”¨ ë³´ì •
 if rainfall > 0:
-    predicted_attendance = int(predicted_attendance * 0.88)
+    predicted_attendance = int(
+        predicted_attendance * 0.88
+    )
 
 if temperature >= 30:
-    predicted_attendance = int(predicted_attendance * 0.93)
+    predicted_attendance = int(
+        predicted_attendance * 0.93
+    )
+
 elif 15 <= temperature <= 25:
-    predicted_attendance = int(predicted_attendance * 1.05)
-
-# ¹ßÇ¥¿ë ±âº» ¿¹½Ã°ª ´À³¦À» »ì¸®°í ½ÍÀ¸¸é ¾Æ·¡ ÁÙ ÁÖ¼® ÇØÁ¦
-# predicted_attendance = 23847
-
-stadium_capacity = get_capacity(stadium)
-congestion = predicted_attendance / stadium_capacity * 100
+    predicted_attendance = int(
+        predicted_attendance * 1.05
+    )
 
 # =========================
-# È¥Àâµµ ´Ü°è ¹× ¾×¼Ç ÇÃ·£
+# í˜¼ì¡ë„ ê³„ì‚°
+# =========================
+stadium_capacity = get_capacity(stadium)
+
+congestion = (
+    predicted_attendance /
+    stadium_capacity
+) * 100
+
+# =========================
+# ìš´ì˜ ë‹¨ê³„
 # =========================
 if congestion < 50:
+
     level = "LOW"
+
     action_class = "action-low"
-    action_title = "? [ºñ¿ë Àı°¨ ¸ğµå]"
-    action_msg = "½ÄÀÚÀç ¹ßÁÖ¸¦ Æò¼Ò ´ëºñ Ãà¼ÒÇÏ°í, ÀÏºÎ ±¸¿ª ¸ÅÁ¡ ¿î¿µÀ» ÃÖ¼ÒÈ­ÇÏ¿© ÀÎ·ÂÀ» È¿À²ÀûÀ¸·Î ¿î¿ëÇÏ¼¼¿ä."
+
+    action_title = "ğŸŸ¢ [ë¹„ìš© ì ˆê° ëª¨ë“œ]"
+
+    action_msg = (
+        "ì‹ìì¬ ë°œì£¼ë¥¼ í‰ì†Œ ëŒ€ë¹„ ì¶•ì†Œí•˜ê³ , "
+        "ì¼ë¶€ êµ¬ì—­ ë§¤ì  ìš´ì˜ì„ ìµœì†Œí™”í•˜ì—¬ "
+        "ì¸ë ¥ì„ íš¨ìœ¨ì ìœ¼ë¡œ ìš´ìš©í•˜ì„¸ìš”."
+    )
+
 elif congestion < 80:
+
     level = "NORMAL"
+
     action_class = "action-mid"
-    action_title = "? [ÀÏ¹İ ¿î¿µ ¸ğµå]"
-    action_msg = "±âº» ¸Å´º¾ó¿¡ µû¶ó ¿î¿µÀ» ÁØºñÇÏ¼¼¿ä. ÀÔÀå µ¿¼±°ú ¸ÅÁ¡ ¿î¿µ »óÅÂ¸¦ »çÀü¿¡ Á¡°ËÇÏ¼¼¿ä."
+
+    action_title = "ğŸŸ¡ [ì¼ë°˜ ìš´ì˜ ëª¨ë“œ]"
+
+    action_msg = (
+        "ê¸°ë³¸ ë§¤ë‰´ì–¼ì— ë”°ë¼ ìš´ì˜ì„ ì¤€ë¹„í•˜ì„¸ìš”. "
+        "ì…ì¥ ë™ì„ ê³¼ ë§¤ì  ìš´ì˜ ìƒíƒœë¥¼ "
+        "ì‚¬ì „ì— ì ê²€í•˜ì„¸ìš”."
+    )
+
 else:
+
     level = "HIGH"
+
     action_class = "action-high"
-    action_title = "? [¾ÈÀü °­È­ ¸ğµå]"
-    action_msg = "°ÔÀÌÆ® ÁÖº¯ ¾ÈÀü ¿ä¿øÀ» 20% Ãß°¡ ¹èÄ¡ÇÏ°í, ¸ÅÁ¡ Àç°í ¼ÒÁø¿¡ ´ëºñÇØ ¹ßÁÖ·®À» ÃÖ´ë·Î ´Ã¸®¼¼¿ä."
+
+    action_title = "ğŸ”´ [ì•ˆì „ ê°•í™” ëª¨ë“œ]"
+
+    action_msg = (
+        "ê²Œì´íŠ¸ ì£¼ë³€ ì•ˆì „ ìš”ì›ì„ "
+        "20% ì¶”ê°€ ë°°ì¹˜í•˜ê³ , "
+        "ë§¤ì  ì¬ê³  ì†Œì§„ì— ëŒ€ë¹„í•´ "
+        "ë°œì£¼ëŸ‰ì„ ìµœëŒ€ë¡œ ëŠ˜ë¦¬ì„¸ìš”."
+    )
 
 # =========================
-# ¸ŞÀÎ È­¸é
+# ë©”ì¸ í™”ë©´
 # =========================
-st.markdown('<div class="main-title">? KBO °ü¶÷ ¼ö¿ä ¿¹Ãø ½Ã½ºÅÛ</div>', unsafe_allow_html=True)
 st.markdown(
-    '<div class="sub-text">°ú°Å °æ±â µ¥ÀÌÅÍ, °üÁß µ¥ÀÌÅÍ, ³¯¾¾ µ¥ÀÌÅÍ¸¦ ±â¹İÀ¸·Î ´ÙÀ½ °æ±âÀÇ °üÁß ¼ö¸¦ ¿¹ÃøÇÕ´Ï´Ù.</div>',
+    '<div class="main-title">ğŸ“ˆ KBO ê´€ëŒ ìˆ˜ìš” ì˜ˆì¸¡ ì‹œìŠ¤í…œ</div>',
+    unsafe_allow_html=True
+)
+
+st.markdown(
+    '<div class="sub-text">'
+    'ê³¼ê±° ê²½ê¸° ë°ì´í„°, ê´€ì¤‘ ë°ì´í„°, ë‚ ì”¨ ë°ì´í„°ë¥¼ ê¸°ë°˜ìœ¼ë¡œ '
+    'ë‹¤ìŒ ê²½ê¸°ì˜ ê´€ì¤‘ ìˆ˜ë¥¼ ì˜ˆì¸¡í•©ë‹ˆë‹¤.'
+    '</div>',
     unsafe_allow_html=True
 )
 
 st.markdown("---")
-st.markdown("## ? °æ±â ÀÏÀÚ ¹× ÆÀ ¼±ÅÃ")
+
+st.markdown("## ğŸ“… ê²½ê¸° ì •ë³´")
 
 st.markdown(
-    f'<div class="match-text">? {game_date} &nbsp;&nbsp; | &nbsp;&nbsp; '
-    f'{home_team} (È¨) &nbsp; vs &nbsp; {away_team} (¿øÁ¤) &nbsp;&nbsp; | &nbsp;&nbsp; {stadium}</div>',
+    f'<div class="match-text">'
+    f'{game_date} | '
+    f'{home_team} vs {away_team} | '
+    f'{stadium}'
+    f'</div>',
     unsafe_allow_html=True
 )
 
+# =========================
+# ì˜ˆìƒ ê´€ì¤‘ ìˆ˜
+# =========================
 st.markdown(f"""
 <div class="predict-box">
-    <div class="predict-label">¿¹»ó °üÁß ¼ö</div>
-    <div class="predict-number">{predicted_attendance:,} ¸í ¿¹Ãø</div>
+
+<div class="predict-label">
+ì˜ˆìƒ ê´€ì¤‘ ìˆ˜
+</div>
+
+<div class="predict-number">
+{predicted_attendance:,} ëª…
+</div>
+
 </div>
 """, unsafe_allow_html=True)
 
+# =========================
+# ì •ë³´ ì¹´ë“œ
+# =========================
 col1, col2, col3 = st.columns(3)
 
 with col1:
+
     st.markdown(f"""
     <div class="card">
-        <div class="card-title">? °æ±âÀå ¼ö¿ë ÀÎ¿ø</div>
-        <div class="card-value">{stadium_capacity:,} ¸í</div>
+
+    <div class="card-title">
+    ğŸ‘¥ ê²½ê¸°ì¥ ìˆ˜ìš© ì¸ì›
+    </div>
+
+    <div class="card-value">
+    {stadium_capacity:,} ëª…
+    </div>
+
     </div>
     """, unsafe_allow_html=True)
 
 with col2:
+
     st.markdown(f"""
     <div class="card">
-        <div class="card-title">? È¥Àâµµ</div>
-        <div class="card-value">{congestion:.1f}%</div>
-        <div class="sub-text">(¿¹Ãø / ¼ö¿ëÀÎ¿ø)</div>
+
+    <div class="card-title">
+    ğŸ“Š í˜¼ì¡ë„
+    </div>
+
+    <div class="card-value">
+    {congestion:.1f}%
+    </div>
+
     </div>
     """, unsafe_allow_html=True)
 
 with col3:
+
     st.markdown(f"""
     <div class="card">
-        <div class="card-title">? ¿î¿µ °­µµ</div>
-        <div class="card-high">{level}</div>
+
+    <div class="card-title">
+    ğŸ›¡ ìš´ì˜ ê°•ë„
+    </div>
+
+    <div class="card-high">
+    {level}
+    </div>
+
     </div>
     """, unsafe_allow_html=True)
 
-st.markdown("## ? »óÈ²º° ¾×¼Ç ÇÃ·£")
+# =========================
+# ì•¡ì…˜ í”Œëœ
+# =========================
+st.markdown("## ğŸ›¡ ìƒí™©ë³„ ì•¡ì…˜ í”Œëœ")
 
 st.markdown(f"""
 <div class="{action_class}">
-    <h2>{action_title}</h2>
-    <p style="font-size:18px; line-height:1.7;">{action_msg}</p>
+
+<h2>{action_title}</h2>
+
+<p style="font-size:18px; line-height:1.7;">
+{action_msg}
+</p>
+
 </div>
 """, unsafe_allow_html=True)
 
 # =========================
-# ÃÖ±Ù À¯»ç °æ±â ±×·¡ÇÁ
+# ìµœê·¼ ê²½ê¸° ê·¸ë˜í”„
 # =========================
-st.markdown("## ? ÃÖ±Ù À¯»ç °æ±â °üÁß ¼ö ÃßÀÌ")
+st.markdown(
+    "## ğŸ“Š í•´ë‹¹ ê²½ê¸°ì¥ ìµœê·¼ 5ê²½ê¸° ê´€ì¤‘ ìˆ˜ ì¶”ì´"
+)
 
-similar_games = df[
-    (df["È¨ÆÀ"] == home_team) |
-    (df["¹æ¹®ÆÀ"] == away_team) |
-    (df["±¸Àå"] == stadium)
-].dropna(subset=["°æ±â³¯Â¥"]).sort_values("°æ±â³¯Â¥").tail(4)
+recent_games = df[
+    df["êµ¬ì¥"] == stadium
+].dropna(
+    subset=["ê²½ê¸°ë‚ ì§œ"]
+).sort_values(
+    "ê²½ê¸°ë‚ ì§œ",
+    ascending=False
+).head(5)
 
-if len(similar_games) > 0:
-    chart_df = similar_games[["°æ±â³¯Â¥", "°üÁß¼ö"]].copy()
-    chart_df["°æ±â³¯Â¥"] = chart_df["°æ±â³¯Â¥"].dt.strftime("%m-%d")
-else:
-    chart_df = pd.DataFrame({
-        "°æ±â³¯Â¥": ["ÃÖ±Ù1", "ÃÖ±Ù2", "ÃÖ±Ù3", "ÃÖ±Ù4"],
-        "°üÁß¼ö": [18000, 21000, 19800, 22300]
-    })
+recent_games = recent_games.sort_values(
+    "ê²½ê¸°ë‚ ì§œ"
+)
 
-chart_df.loc[len(chart_df)] = ["ÀÌ¹ø °æ±â ¿¹Ãø", predicted_attendance]
+chart_df = recent_games[
+    ["ê²½ê¸°ë‚ ì§œ", "í™ˆíŒ€", "ë°©ë¬¸íŒ€", "ê´€ì¤‘ìˆ˜"]
+].copy()
 
-fig, ax = plt.subplots(figsize=(10, 4))
+chart_df["ê²½ê¸°ì •ë³´"] = (
+    chart_df["ê²½ê¸°ë‚ ì§œ"].dt.strftime("%m/%d")
+    + "\n"
+    + chart_df["í™ˆíŒ€"]
+    + " vs "
+    + chart_df["ë°©ë¬¸íŒ€"]
+)
+
+chart_df.loc[len(chart_df)] = [
+    pd.NaT,
+    home_team,
+    away_team,
+    predicted_attendance,
+    "ì´ë²ˆ ê²½ê¸° ì˜ˆì¸¡"
+]
+
+fig, ax = plt.subplots(
+    figsize=(11, 4)
+)
+
 fig.patch.set_facecolor("#07111f")
 ax.set_facecolor("#07111f")
 
-ax.bar(chart_df["°æ±â³¯Â¥"], chart_df["°üÁß¼ö"])
-ax.set_ylabel("°üÁß ¼ö")
-ax.set_title("ÃÖ±Ù À¯»ç °æ±â °üÁß ¼ö ÃßÀÌ")
+bars = ax.bar(
+    chart_df["ê²½ê¸°ì •ë³´"],
+    chart_df["ê´€ì¤‘ìˆ˜"]
+)
+
+# ë§ˆì§€ë§‰ ì˜ˆì¸¡ ê°’ ìƒ‰ìƒ ë³€ê²½
+for i, bar in enumerate(bars):
+
+    if i == len(bars) - 1:
+        bar.set_color("#18e6ff")
+
+    else:
+        bar.set_color("#4f8cff")
+
+# ë§‰ëŒ€ ìœ„ ìˆ«ì
+for bar in bars:
+
+    height = bar.get_height()
+
+    ax.text(
+        bar.get_x() + bar.get_width()/2,
+        height + 300,
+        f"{int(height):,}",
+        ha="center",
+        color="white",
+        fontsize=10
+    )
+
+ax.set_title(
+    f"{stadium} ìµœê·¼ 5ê²½ê¸° ê´€ì¤‘ ìˆ˜ + ì´ë²ˆ ê²½ê¸° ì˜ˆì¸¡"
+)
+
+ax.set_ylabel("ê´€ì¤‘ ìˆ˜")
 
 ax.tick_params(colors="white")
+
 ax.yaxis.label.set_color("white")
+
 ax.title.set_color("white")
 
 for spine in ax.spines.values():
     spine.set_color("#9fb3c8")
 
+plt.xticks(
+    rotation=0,
+    color="white"
+)
+
+plt.yticks(color="white")
+
 st.pyplot(fig)
 
-st.markdown(
-    '<div class="notice-box">¨Õ º» ¿¹ÃøÀº °ú°Å °æ±â µ¥ÀÌÅÍ¿Í ±â»ó Á¤º¸¸¦ ±â¹İÀ¸·Î »êÃâµÈ °ªÀ¸·Î, ½ÇÁ¦ °üÁß ¼ö¿Í Â÷ÀÌ°¡ ÀÖÀ» ¼ö ÀÖ½À´Ï´Ù.</div>',
-    unsafe_allow_html=True
-)
+# =========================
+# ì•ˆë‚´ë¬¸
+# =========================
+st.markdown("""
+<div class="notice-box">
+
+â“˜ ë³¸ ì˜ˆì¸¡ì€ ê³¼ê±° ê²½ê¸° ë°ì´í„°ì™€ ê¸°ìƒ ì •ë³´ë¥¼ ê¸°ë°˜ìœ¼ë¡œ ì‚°ì¶œëœ ê°’ì´ë©°,
+ì‹¤ì œ ê´€ì¤‘ ìˆ˜ì™€ ì°¨ì´ê°€ ìˆì„ ìˆ˜ ìˆìŠµë‹ˆë‹¤.
+
+</div>
+""", unsafe_allow_html=True)
