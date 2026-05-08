@@ -3,6 +3,7 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
+from pathlib import Path
 
 # =========================
 # 한글 폰트 설정 (Mac)
@@ -23,14 +24,53 @@ st.set_page_config(
 # =========================
 @st.cache_data
 def load_data():
-    df = pd.read_csv("kbo_2025_attendance_weather.csv")
+
+    BASE_DIR = Path(__file__).resolve().parent
+
+    possible_paths = [
+
+        # 현재 폴더
+        BASE_DIR / "kbo_2025_attendance_weather.csv",
+
+        # 상위 폴더들
+        BASE_DIR.parent / "kbo_2025_attendance_weather.csv",
+        BASE_DIR.parent.parent / "kbo_2025_attendance_weather.csv",
+        BASE_DIR.parent.parent.parent / "kbo_2025_attendance_weather.csv",
+
+        # data 폴더
+        BASE_DIR.parent.parent / "data" / "kbo_2025_attendance_weather.csv",
+        BASE_DIR.parent.parent.parent / "data" / "kbo_2025_attendance_weather.csv",
+    ]
+
+    DATA_PATH = None
+
+    for path in possible_paths:
+
+        if path.exists():
+            DATA_PATH = path
+            break
+
+    if DATA_PATH is None:
+
+        st.error(
+            "CSV 파일을 찾을 수 없습니다.\n"
+            "kbo_2025_attendance_weather.csv 파일을 "
+            "프로젝트 폴더 또는 data 폴더에 넣어주세요."
+        )
+
+        st.stop()
+
+    df = pd.read_csv(DATA_PATH)
 
     df["경기날짜"] = pd.to_datetime(
         df["경기날짜"],
         errors="coerce"
     )
 
-    df["일합계강수량(mm)"] = df["일합계강수량(mm)"].fillna(0)
+    df["일합계강수량(mm)"] = (
+        df["일합계강수량(mm)"]
+        .fillna(0)
+    )
 
     return df
 
@@ -52,7 +92,9 @@ capacity_dict = {
 }
 
 def get_capacity(stadium_name):
+
     for key, value in capacity_dict.items():
+
         if key in str(stadium_name):
             return value
 
@@ -226,30 +268,36 @@ humidity = st.sidebar.slider(
 # 임시 예측 로직
 # =========================
 base_df = df[
-    (df["구장"] == stadium)
+    df["구장"] == stadium
 ]
 
 if len(base_df) > 0:
+
     predicted_attendance = int(
         base_df["관중수"].mean()
     )
+
 else:
+
     predicted_attendance = int(
         df["관중수"].mean()
     )
 
 # 날씨 보정
 if rainfall > 0:
+
     predicted_attendance = int(
         predicted_attendance * 0.88
     )
 
 if temperature >= 30:
+
     predicted_attendance = int(
         predicted_attendance * 0.93
     )
 
 elif 15 <= temperature <= 25:
+
     predicted_attendance = int(
         predicted_attendance * 1.05
     )
@@ -478,7 +526,7 @@ bars = ax.bar(
     chart_df["관중수"]
 )
 
-# 마지막 예측 값 색상 변경
+# 마지막 예측 bar 색상 변경
 for i, bar in enumerate(bars):
 
     if i == len(bars) - 1:
@@ -487,13 +535,13 @@ for i, bar in enumerate(bars):
     else:
         bar.set_color("#4f8cff")
 
-# 막대 위 숫자
+# 막대 위 숫자 표시
 for bar in bars:
 
     height = bar.get_height()
 
     ax.text(
-        bar.get_x() + bar.get_width()/2,
+        bar.get_x() + bar.get_width() / 2,
         height + 300,
         f"{int(height):,}",
         ha="center",
