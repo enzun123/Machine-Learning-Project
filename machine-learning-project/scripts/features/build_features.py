@@ -186,6 +186,17 @@ def create_features_pro(df_main, df_stadium):
         include_lowest=True,
     )
 
+    # pd.cut / is_hot 전 결측 보간 — 버킷·is_hot NaN 방지 (열 중앙값, 부재 시 기본값)
+    ta = df["일평균기온(°C)"]
+    ta_med = float(ta.median()) if pd.notna(ta.median()) else 15.0
+    df["일평균기온(°C)"] = ta.fillna(ta_med)
+    rh = df["일평균상대습도(%)"]
+    rh_med = float(rh.median()) if pd.notna(rh.median()) else 60.0
+    df["일평균상대습도(%)"] = rh.fillna(rh_med).clip(0, 100)
+    ws = df["일평균풍속(m/s)"]
+    ws_med = float(ws.median()) if pd.notna(ws.median()) else 2.0
+    df["일평균풍속(m/s)"] = ws.fillna(ws_med).clip(lower=0)
+
     df["is_hot"] = (df["일평균기온(°C)"] >= 30).astype(int)
     df["temp_bucket"] = pd.cut(
         df["일평균기온(°C)"],
@@ -227,9 +238,10 @@ if __name__ == "__main__":
 
     try:
         if not os.path.exists(path_main):
-            path_main = os.path.join(project_root, "data/processed/final_dataset (2).csv")
-        if not os.path.exists(path_main):
-            raise FileNotFoundError(f"입력 CSV 없음: {path_main}")
+            raise FileNotFoundError(
+                f"입력 CSV 없음: {path_main}\n"
+                "먼저 실행: python3 scripts/preprocessing/preprocess_attendance_weather.py"
+            )
 
         df_final = pd.read_csv(path_main, encoding="utf-8-sig")
         df_st_info = pd.read_csv(path_stadium, encoding="utf-8-sig") if os.path.exists(path_stadium) else pd.DataFrame()

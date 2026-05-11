@@ -45,9 +45,11 @@ KBO 관중수 예측 - EDA 기반 피처엔지니어링 핸드오프
 6) temperature features
    - temp_bucket 예시: (<10), [10,20), [20,25), [25,30), (>=30)
    - is_hot: 일평균기온 >= 30 이면 1
+   - 결측: pd.cut·is_hot 적용 전 `일평균기온(°C)`을 열 중앙값으로 보간(중앙값 없으면 15°C)
 
 7) humidity/wind buckets
    - humidity_bucket, wind_bucket 구간화 변수
+   - 결측: pd.cut 전 습도·풍속을 열 중앙값으로 보간; 습도 0~100, 풍속>=0 클램프(중앙값 없으면 습도 60%, 풍속 2 m/s)
 
 8) 순위·폼 proxy (build_features.py, 공식 기록실 순위 아님)
    - 경기날짜·game_no 순으로만 과거 반영(당일 관중수 누수 없음)
@@ -71,7 +73,8 @@ KBO 관중수 예측 - EDA 기반 피처엔지니어링 핸드오프
 - 학습(train)과 추론(predict/UI)에서 동일 로직 사용
 - 경기시간 컬럼은 원본 데이터에 유지하되, 모델 입력 피처에서는 사용하지 않음.
 - 컬럼명, 타입, 순서 고정(피처 스키마 문서화)
-- 결측 처리 규칙 고정(예: 강수 결측 0)
+- 결측 처리 규칙 고정: 강수 결측 0; 기온·습도·풍속은 `pd.cut`/is_hot 전 열 중앙값 보간([4] 6·7항과 build_features.py 동일)
+- 입력 CSV는 `data/processed/final_dataset.csv`만 사용(`final_dataset (2).csv` 등 폴백 없음)
 - 범주형 미등록값(신규 팀명/구장명) 처리 전략 포함
 
 [8] 모델링 팀 전달 권장 체크리스트
