@@ -1,16 +1,53 @@
-import pandas as pd  # 이 줄이 반드시 맨 위에 있어야 합니다!
+"""
+구장별 최대 수용 인원 마스터 생성 (feat/stadium-capacity)
 
-# 구장별 수용 인원 기준표
-stadium_info = {
-    '구단': ['LG', '두산', '삼성', 'SSG', '롯데', 'NC', 'KIA', '한화', 'KT', '키움'],
-    '구장': ['잠실', '잠실', '대구', '인천', '부산', '창원', '광주', '대전', '수원', '고척'],
-    '최대수용인원': [23750, 23750, 24000, 23000, 22990, 17891, 20500, 20000, 18700, 16000]
-}
+- 출력: data/external/kbo_stadium_info.csv (build_features·전처리에서 정본으로 사용)
+- 전처리/피처의 구장 별칭: 문학→인천, 한밭→대전 은 preprocess / build_features 의 STADIUM_ALIAS 와 맞출 것
 
-# 이제 pd를 사용할 수 있습니다.
-df_stadium = pd.DataFrame(stadium_info)
+실행:
+  cd machine-learning-project
+  python3 scripts/data_collection/kbo_size.py
+"""
 
-# 파일 저장까지 하려면
-df_stadium.to_csv("kbo_stadium_info.csv", index=False, encoding="utf-8-sig")
+from __future__ import annotations
 
-print("구장 정보 파일 생성 완료!")
+from pathlib import Path
+
+import pandas as pd
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+OUTPUT_PATH = PROJECT_ROOT / "data" / "external" / "kbo_stadium_info.csv"
+
+# KBO 공개 자료·구장 안내 기준(연도에 따라 변동 가능). 수치 수정 시 이 파일만 갱신하면 됨.
+STADIUM_ROWS: list[tuple[str, str, int]] = [
+    ("LG", "잠실", 25000),
+    ("두산", "잠실", 25000),
+    ("SSG", "인천", 23000),
+    ("SSG", "문학", 23000),
+    ("롯데", "부산", 27500),
+    ("롯데", "사직", 27500),
+    ("NC", "창원", 22000),
+    ("NC", "울산", 22000),
+    ("NC", "청주", 10500),
+    ("NC", "포항", 9000),
+    ("KIA", "광주", 20500),
+    ("한화", "대전", 20000),
+    ("한화", "한밭", 12000),
+    ("삼성", "대구", 24000),
+    ("삼성", "포항", 9000),
+    ("KT", "수원", 20000),
+    ("KT", "청주", 10500),
+    ("키움", "고척", 16500),
+]
+
+
+def main() -> None:
+    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    df = pd.DataFrame(STADIUM_ROWS, columns=["구단", "구장", "최대수용인원"])
+    df.to_csv(OUTPUT_PATH, index=False, encoding="utf-8-sig")
+    print(f"저장 완료: {OUTPUT_PATH}")
+    print(f"행 수: {len(df)} (구장 문자열 기준 조인 — 별칭은 전처리/피처 스크립트에서 통일)")
+
+
+if __name__ == "__main__":
+    main()
