@@ -1,3 +1,10 @@
+"""
+feat/eda: `final_dataset.csv` 기준 탐색 전용.
+
+- 목적: 피처 설계 아이디어·리포트 생성. `kbo_train_ready` / 모델 입력 컬럼은 여기서 수정하지 않음.
+- 실행: 프로젝트 루트에서 `python3 machine-learning-project/scripts/eda/run_eda.py`
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -15,8 +22,9 @@ FIG_DIR = OUTPUT_DIR / "figures"
 SUMMARY_PATH = OUTPUT_DIR / "eda_summary.md"
 WEEKDAY_ORDER = ["월", "화", "수", "목", "금", "토", "일"]
 STADIUM_ALIAS_MAP = {
-    # 동일 구장 명칭 통합
+    # preprocess / build_features 와 동일하게 통일
     "한밭": "대전",
+    "문학": "인천",
 }
 
 

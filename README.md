@@ -1,31 +1,33 @@
-🤖 feat/ml-modeling
-📌 브랜치 목적
-전처리 완료된 데이터(kbo_train_ready.csv)를 활용하여 KBO 관중수 예측 베이스라인 모델(Random Forest)을 학습시키고, UI 서비스에 연동할 최종 파이프라인 객체(attendance_rf_pipeline.joblib)와 성능 평가 리포트를 생성합니다.
+# KBO 관중 예측 ML 프로젝트 (`develop`)
 
-🚀 바로 실행하기
-아래 패키지를 설치한 후 머신러닝 학습 및 평가 스크립트를 실행하세요.
+## 전체 코드 실행 순서
 
-🚀 전체 코드 실행순서
-feat/scraping-kbo
+1. `feat/scraping-kbo`
+2. `feat/weather-api`
+3. `feat/preprocessing`
+4. `feat/stadium-capacity` (구장 정본 `kbo_stadium_info.csv`)
+5. `feat/eda`
+6. `feat/feature-engineering` (`build_features.py` → `kbo_train_ready.csv`)
+7. `feat/ml-modeling`
+8. `feat/streamlit-ui`
 
-feat/weather-api
+## `feat/eda` (탐색만, 모델 입력 스키마는 변경하지 않음)
 
-feat/preprocessing
+- **입력:** `machine-learning-project/data/processed/final_dataset.csv` (및 EDA용 `kbo_stadium_info.csv` 조인)
+- **산출:** `machine-learning-project/reports/eda/` 요약·그림
+- **`kbo_train_ready.csv`·학습용 컬럼 확정**은 `feat/feature-engineering`에서 처리합니다.
 
-feat/eda
+```bash
+pip install pandas matplotlib seaborn
+python3 machine-learning-project/scripts/eda/run_eda.py
+```
 
-feat/feature-engineering
+## `feat/ml-modeling`
 
-feat/ml-modeling (현재 단계)
+`kbo_train_ready.csv`로 베이스라인 학습·평가(joblib 파이프라인, 리포트)를 수행합니다.
 
-feat/streamlit-ui
-
-Bash
-# 1) 머신러닝 필수 패키지 설치
+```bash
 pip install pandas numpy scikit-learn joblib
-
-# 2) 베이스라인 모델 학습 실행 (joblib 파이프라인 및 train_report 생성)
-python machine-learning-project/scripts/modeling/train_model.py
-
-# 3) (선택) 테스트 세트 상세 평가 및 피처 중요도(Feature Importance) 추출
-python machine-learning-project/scripts/modeling/evaluate_model.py
+python3 machine-learning-project/scripts/modeling/train_model.py
+python3 machine-learning-project/scripts/modeling/evaluate_model.py
+```
