@@ -5,9 +5,13 @@ KBO 일자별 관중 기록 스크래핑 (GraphDaily)
 """
 from __future__ import annotations
 
+import argparse
+import os
 import re
+import sys
 import time
 from pathlib import Path
+
 import pandas as pd
 from bs4 import BeautifulSoup
 from selenium import webdriver
@@ -97,6 +101,15 @@ def parse_game_datetime(date_str: str, time_str: str, season_year: int) -> pd.Ti
         return pd.Timestamp(year=y, month=month, day=day, hour=hour, minute=minute)
     except (ValueError, TypeError):
         return pd.NaT
+
+
+def parse_crowd_to_int(series: pd.Series) -> pd.Series:
+    """관중수 셀: 쉼표·'명' 등 제거 후 정수. 비어 있으면 NA."""
+    s = series.astype(str).str.strip()
+    s = s.str.replace(",", "", regex=False)
+    s = s.str.replace(r"[^\d]", "", regex=True)
+    s = s.replace("", pd.NA)
+    return pd.to_numeric(s, errors="coerce").astype("Int64")
 
 
 def split_away_home(game_cell: str) -> tuple[str, str]:
@@ -223,18 +236,28 @@ def enrich_attendance_df(df: pd.DataFrame, year: int) -> pd.DataFrame:
         parse_game_datetime(d, t, year) for d, t in zip(out["날짜"], out["경기시간"])
     ]
     ts = pd.to_datetime(out["경기일시"], errors="coerce")
+    bad_dt = int(ts.isna().sum())
+    if bad_dt:
+        print(f"  [검증] 날짜 파싱 실패 행 {bad_dt}건 제거 예정")
     out["경기날짜"] = ts.dt.strftime("%Y-%m-%d")
     out["월"] = ts.dt.month
     out["주차_ISO"] = ts.dt.isocalendar().week.astype("Int64")
+    out = out.loc[ts.notna()].copy()
 
-    out["관중수"] = (
-        out["관중수"]
-        .astype(str)
-        .str.replace(",", "", regex=False)
-        .replace({"": pd.NA, "-": pd.NA})
-    )
+    out["관중수"] = parse_crowd_to_int(out["관중수"])
     out = out.dropna(subset=["관중수"])
     out["관중수"] = out["관중수"].astype(int)
+
+    cap_warn = (out["관중수"] > 50000) | (out["관중수"] < 0)
+    if cap_warn.any():
+        n = int(cap_warn.sum())
+        print(f"  [검증] 관중수 5만 초과 또는 음수 의심 {n}건 — 원본·스크래핑 셀 확인 권장")
+
+    dup_key = ["경기날짜", "홈팀", "방문팀", "구장"]
+    if all(c in out.columns for c in dup_key):
+        dups = out.duplicated(subset=dup_key, keep=False)
+        if dups.any():
+            print(f"  [검증] 동일 키 중복 행 {int(dups.sum())}건(더블헤더 등 가능)")
 
     # 최종보낼 컬럼 순서 (y는 관중수)
     cols = [
@@ -255,9 +278,20 @@ def enrich_attendance_df(df: pd.DataFrame, year: int) -> pd.DataFrame:
     return out[cols]
 
 
-def scrape_kbo_attendance(years: list[int]) -> dict[int, list]:
+def scrape_kbo_attendance(years: list[int], *, headless: bool = True) -> dict[int, list]:
     """연도별 행 목록. 각 행은 dict(헤더 매칭) 또는 list(구형 6열)."""
     chrome_options = Options()
+    if headless:
+        chrome_options.add_argument("--headless=new")
+    chrome_options.add_argument("--window-size=1400,900")
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument(
+        "user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    )
+
     service = Service(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=chrome_options)
 
@@ -390,11 +424,32 @@ def raw_rows_to_dataframe(rows: list[list[str]]) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=names)
 
 
-if __name__ == "__main__":
-    RAW_DIR.mkdir(parents=True, exist_ok=True)
-    target_years = [2024, 2025]
+def _parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="KBO GraphDaily 관중 스크래핑")
+    p.add_argument(
+        "--years",
+        type=int,
+        nargs="+",
+        default=[2024, 2025],
+        help="수집 연도 (기본: 2024 2025)",
+    )
+    p.add_argument(
+        "--headed",
+        action="store_true",
+        help="헤드리스 끄고 브라우저 창 표시(사이트 구조 디버그용)",
+    )
+    return p.parse_args()
 
-    scraped_data_dict = scrape_kbo_attendance(target_years)
+
+if __name__ == "__main__":
+    args = _parse_args()
+    target_years = sorted(set(args.years))
+    headless = not args.headed and os.environ.get("KBO_SCRAPE_HEADLESS", "1") != "0"
+
+    RAW_DIR.mkdir(parents=True, exist_ok=True)
+    print(f"수집 연도: {target_years} | headless={headless}")
+
+    scraped_data_dict = scrape_kbo_attendance(target_years, headless=headless)
 
     for year, data in scraped_data_dict.items():
         if not data:
@@ -411,3 +466,7 @@ if __name__ == "__main__":
         file_path = RAW_DIR / f"kbo_{year}_attendance.csv"
         df.to_csv(file_path, index=False, encoding="utf-8-sig")
         print(f"{file_path} 파일이 성공적으로 저장되었습니다.")
+
+    if all(not scraped_data_dict.get(y) for y in target_years):
+        print("수집 결과가 비었습니다. --headed 로 사이트·차단 여부를 확인하세요.", file=sys.stderr)
+        sys.exit(1)
