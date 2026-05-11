@@ -1,0 +1,19 @@
+{
+  "n_samples": 1436,
+  "n_train": 1148,
+  "n_test": 288,
+  "target": "관중수",
+  "random_state": 42,
+  "test_size": 0.2,
+  "data_path": "/Users/mymac/Machine-Learning-Project/machine-learning-project/data/processed/kbo_train_ready.csv",
+  "baseline_dummy_mean": {
+    "mae": 4589.77764469609,
+    "rmse": 5477.429482658581,
+    "r2": -0.0011021594999036655
+  },
+  "random_forest": {
+    "mae": 2079.0006058742206,
+    "rmse": 2821.0265714229017,
+    "r2": 0.734454368228002
+  }
+}
