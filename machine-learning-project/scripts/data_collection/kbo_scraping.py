@@ -25,6 +25,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RAW_DIR = PROJECT_ROOT / "data" / "raw"
 
 # 구장명(부분 일치) → 기상·지역 데이터 조인용 키
+# weather_api.STADIUM_STN_MAP·관측 지점(청주 131, 대전/한밭 133, 포항 138 등)과 동일 권역으로 맞춤.
+# 한밭은 대전 구장 별칭 → 대전 관측권; 청주·포항은 KBO 임시/대체 구장.
 STADIUM_TO_REGION_KEY: dict[str, str] = {
     "잠실": "서울_잠실",
     "고척": "서울_고척",
@@ -32,11 +34,14 @@ STADIUM_TO_REGION_KEY: dict[str, str] = {
     "인천": "인천",
     "문학": "인천",
     "사직": "부산",
+    "한밭": "대전",
     "대전": "대전",
     "광주": "광주",
     "대구": "대구",
     "창원": "경남_창원",
     "울산": "울산",
+    "청주": "청주",
+    "포항": "포항",
 }
 
 
