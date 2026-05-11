@@ -50,6 +50,13 @@ KBO 관중수 예측 - EDA 기반 피처엔지니어링 핸드오프
 7) humidity/wind buckets
    - humidity_bucket, wind_bucket 구간화 변수
 
+8) 순위·폼 proxy (build_features.py, 공식 기록실 순위 아님)
+   - 경기날짜·game_no 순으로만 과거 반영(당일 관중수 누수 없음)
+   - home_prior_mean_att / visitor_prior_mean_att: 시즌 누적 홈·원정 평균 관중(이 경기 제외)
+   - home_last5_mean_att / visitor_last5_mean_att: 최근 5홈/5원정 평균 관중
+   - home_draw_pct_in_league / visitor_away_draw_pct_in_league: 같은 연도에서 위 누적 평균의 리그 내 퍼센타일(0~1)
+   - home_visitor_prior_draw_diff: 홈 누적 평균 − 원정 누적 평균
+
 [5] 2차 확장 변수 (모델 성능 개선용)
 - weekend_x_rain
 - team_x_weekday
