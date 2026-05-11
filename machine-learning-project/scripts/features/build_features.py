@@ -1,5 +1,6 @@
 import os
 import sys
+from collections import defaultdict, deque
 
 import numpy as np
 import pandas as pd
@@ -19,11 +20,23 @@ REQUIRED_COLS = [
     "방문팀",
     "구장",
     "요일",
+    "경기날짜",
     "일합계강수량(mm)",
     "일평균기온(°C)",
     "일평균풍속(m/s)",
     "일평균상대습도(%)",
     "관중수",
+]
+
+# 공식 순위·승패가 없을 때: 경기일시 순 ‘폼’(지난 홈/원정 관중) + 리그 내 상대 퍼센타일(인기도 순위 proxy)
+FORM_AND_DRAW_COLS = [
+    "home_prior_mean_att",
+    "visitor_prior_mean_att",
+    "home_last5_mean_att",
+    "visitor_last5_mean_att",
+    "home_draw_pct_in_league",
+    "visitor_away_draw_pct_in_league",
+    "home_visitor_prior_draw_diff",
 ]
 
 MODEL_READY_COLUMNS = [
@@ -45,12 +58,94 @@ MODEL_READY_COLUMNS = [
     "weekday_sin",
     "weekday_cos",
     "stadium_x_rain",
+    *FORM_AND_DRAW_COLS,
     "관중수",
 ]
 
 
+def _pct_rank(score: float, values: list[float]) -> float:
+    arr = np.array([x for x in values if not (pd.isna(x) or np.isnan(x))], dtype=float)
+    if arr.size == 0 or pd.isna(score) or np.isnan(score):
+        return np.nan
+    arr.sort()
+    below = int(np.searchsorted(arr, score, side="left"))
+    equal = int(np.searchsorted(arr, score, side="right")) - below
+    return (below + 0.5 * equal) / float(arr.size)
+
+
+def add_season_form_and_draw_proxy(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    해당 경기 이전까지의 정보만 사용(관중수 누수 없음).
+
+    - 폼: 홈팀·방문팀 각각 홈/원정으로 치른 과거 경기의 평균·최근 5경기 평균 관중
+    - 순위 proxy: 같은 연도에서, 위 누적 평균을 리그 전체 팀과 비교한 퍼센타일(0~1)
+      (공식 기록실 순위가 아님)
+    """
+    out = df.copy()
+    if "game_no" not in out.columns:
+        out["game_no"] = 1
+    out["game_no"] = pd.to_numeric(out["game_no"], errors="coerce").fillna(1).astype(int)
+
+    work = out.sort_values(["연도", "경기날짜", "game_no"], kind="mergesort").copy()
+    orig_index = work.index.to_numpy()
+    work = work.reset_index(drop=True)
+
+    teams = sorted(set(work["홈팀"].astype(str).unique()) | set(work["방문팀"].astype(str).unique()))
+    hs: dict[tuple[int, str], float] = defaultdict(float)
+    hc: dict[tuple[int, str], int] = defaultdict(int)
+    vs: dict[tuple[int, str], float] = defaultdict(float)
+    vc: dict[tuple[int, str], int] = defaultdict(int)
+    home_hist: dict[tuple[int, str], deque[float]] = defaultdict(lambda: deque(maxlen=5))
+    away_hist: dict[tuple[int, str], deque[float]] = defaultdict(lambda: deque(maxlen=5))
+
+    rec: list[tuple[float, float, float, float, float, float, float]] = []
+    for j in range(len(work)):
+        row = work.iloc[j]
+        y = int(row["연도"])
+        h = str(row["홈팀"])
+        v = str(row["방문팀"])
+        att = float(row["관중수"])
+        kh, kv = (y, h), (y, v)
+
+        h_prior = hs[kh] / hc[kh] if hc[kh] else np.nan
+        v_prior = vs[kv] / vc[kv] if vc[kv] else np.nan
+        h5 = float(np.mean(home_hist[kh])) if home_hist[kh] else np.nan
+        v5 = float(np.mean(away_hist[kv])) if away_hist[kv] else np.nan
+
+        league_home = [hs[(y, t)] / hc[(y, t)] for t in teams if hc[(y, t)] > 0]
+        league_away = [vs[(y, t)] / vc[(y, t)] for t in teams if vc[(y, t)] > 0]
+
+        h_pct = _pct_rank(float(h_prior), league_home) if hc[kh] > 0 else np.nan
+        v_pct = _pct_rank(float(v_prior), league_away) if vc[kv] > 0 else np.nan
+
+        if not (pd.isna(h_prior) or pd.isna(v_prior)):
+            h_diff = float(h_prior - v_prior)
+        else:
+            h_diff = np.nan
+
+        rec.append((float(h_prior), float(v_prior), h5, v5, h_pct, v_pct, h_diff))
+
+        hs[kh] += att
+        hc[kh] += 1
+        vs[kv] += att
+        vc[kv] += 1
+        home_hist[kh].append(att)
+        away_hist[kv].append(att)
+
+    feat = pd.DataFrame(rec, columns=FORM_AND_DRAW_COLS)
+    work[FORM_AND_DRAW_COLS] = feat.values
+    work.index = orig_index
+    joined = out.join(work[FORM_AND_DRAW_COLS], how="left")
+    for c in FORM_AND_DRAW_COLS:
+        med_y = joined.groupby("연도", observed=True)[c].transform("median")
+        joined[c] = joined[c].fillna(med_y).fillna(joined[c].median())
+        joined[c] = joined[c].fillna(0.0)
+    return joined
+
+
 def create_features_pro(df_main, df_stadium):
     df = df_main.copy()
+    df["관중수"] = pd.to_numeric(df["관중수"], errors="coerce")
 
     df["구장"] = df["구장"].replace(STADIUM_ALIAS)
 
@@ -115,6 +210,7 @@ def create_features_pro(df_main, df_stadium):
 
     df["stadium_x_rain"] = df["구장"].astype(str) + "_" + df["is_rain"].astype(str)
 
+    df = add_season_form_and_draw_proxy(df)
     return df
 
 
@@ -148,6 +244,7 @@ if __name__ == "__main__":
         print("Success: Final Data for ML pipeline is generated.")
         print(f"Location: {save_path}")
         print("rain_bucket: No_Rain / Rain_0_1mm / Rain_1_5mm / Rain_5mm_plus (명세 구간)")
+        print("form/rank proxy: home/visitor prior & last5 att; *_draw_pct_in_league (공식 순위 아님)")
         print("-" * 50)
 
     except Exception as e:
