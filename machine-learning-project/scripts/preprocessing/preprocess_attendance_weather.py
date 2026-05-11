@@ -1,8 +1,19 @@
 """
 interim 관중+기상 CSV → final_dataset.csv 병합·정리 (feat/preprocessing)
 
-입력: data/interim/kbo_*_attendance_weather.csv (weather_api 등으로 생성)
-출력: data/processed/final_dataset.csv
+입력(기본):
+  data/interim/kbo_2024_attendance_weather.csv
+  data/interim/kbo_2025_attendance_weather.csv
+  — `scripts/data_collection/weather_api.py` 로 생성하거나, 동일 컬럼 스키마의 CSV를
+    `--inputs` 로 직접 넘깁니다. (weather 단계 생략 시에도 interim 파일이 있어야 합니다.)
+
+출력:
+  data/processed/final_dataset.csv
+
+정렬·키 (build_features 시계열 피처와 동일 계약):
+  - `경기날짜`: `경기일시`에서 파생·보정(없을 때). YYYY-MM-DD 문자열.
+  - `game_no`: 같은 (연도, 경기날짜, 홈팀, 방문팀, 구장) 내에서 `경기일시` 순으로 1,2,… (더블헤더).
+  - 최종 행 순서: 연도 → 경기날짜 → game_no → 경기일시 → … (아래 SORT_OUTPUT 참고)
 
 실행:
   cd machine-learning-project
@@ -22,6 +33,11 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 
 # build_features.py 와 동일 — 구장 수용·기상 조인 일관성
 STADIUM_ALIAS = {"한밭": "대전", "문학": "인천"}
+
+# build_features 시계열 정렬과 맞춤. 더블헤더 순서는 `_ts_for_sort`(경기일시 파싱)로만 구분.
+SORT_FOR_GAME_NO = ["연도", "경기날짜", "홈팀", "방문팀", "구장", "_ts_for_sort"]
+GAME_NO_GROUP_KEY = ["연도", "경기날짜", "홈팀", "방문팀", "구장"]
+SORT_OUTPUT = ["연도", "경기날짜", "game_no", "_ts_for_sort", "홈팀", "방문팀", "구장"]
 
 DEFAULT_INPUTS = [
     ROOT_DIR / "data" / "interim" / "kbo_2024_attendance_weather.csv",
@@ -54,6 +70,23 @@ def _parse_crowd_series(s: pd.Series) -> pd.Series:
     return pd.to_numeric(t, errors="coerce")
 
 
+def _ensure_경기날짜_and_ts(df: pd.DataFrame) -> pd.DataFrame:
+    """경기일시 파싱 + 경기날짜(YYYY-MM-DD) 보장. build_features 정렬과 동일한 날짜 키."""
+    out = df.copy()
+    ts = pd.to_datetime(out["경기일시"], errors="coerce")
+    if "경기날짜" not in out.columns:
+        out["경기날짜"] = pd.NA
+    rd = pd.to_datetime(out["경기날짜"], errors="coerce")
+    # 경기날짜 비어 있으면 경기일시에서만 채움
+    fill = ts.dt.normalize()
+    out["경기날짜"] = rd.fillna(fill).dt.strftime("%Y-%m-%d")
+    mask_bad = out["경기날짜"].isin(["NaT", "NaN", ""]) | out["경기날짜"].isna()
+    if mask_bad.any():
+        out.loc[mask_bad, "경기날짜"] = ts.loc[mask_bad].dt.strftime("%Y-%m-%d")
+    out["_ts_for_sort"] = ts
+    return out
+
+
 def main() -> None:
     args = _parse_args()
     input_paths = list(args.inputs) if args.inputs is not None else list(DEFAULT_INPUTS)
@@ -64,7 +97,12 @@ def main() -> None:
         print(
             "FATAL: 다음 입력 파일이 없습니다.\n"
             + "\n".join(f"  - {p}" for p in missing)
-            + "\n(2단계 weather_api 생략 시, 기존 interim을 두거나 weather_api를 먼저 실행하세요.)",
+            + "\n\n해결 방법:\n"
+            "  1) `data/interim/` 에 `kbo_*_attendance_weather.csv` 가 있는지 확인\n"
+            "  2) 없으면 `python3 scripts/data_collection/weather_api.py` 로 생성\n"
+            "     (또는 동일 스키마 CSV를 `--inputs 경로1 경로2` 로 지정)\n"
+            "  3) 기본 interim 경로:\n"
+            + "\n".join(f"     - {p}" for p in DEFAULT_INPUTS),
             file=sys.stderr,
         )
         sys.exit(1)
@@ -82,12 +120,18 @@ def main() -> None:
     if "구장" in df.columns:
         df["구장"] = df["구장"].replace(STADIUM_ALIAS)
 
-    # 경기 키 중복은 더블헤더 가능성을 고려해 유지하고 game_no로 구분합니다.
-    match_key = ["연도", "경기일시", "홈팀", "방문팀", "구장"]
-    for col in match_key:
+    for col in ("경기일시", "홈팀", "방문팀", "구장", "연도"):
         if col not in df.columns:
             raise KeyError(f"필수 키 컬럼이 없습니다: {col}")
-    df["game_no"] = df.groupby(match_key).cumcount() + 1
+
+    df = _ensure_경기날짜_and_ts(df)
+
+    # 더블헤더: 같은 (연도, 경기날짜, 홈, 방문, 구장)에서 경기일시(파싱) 순으로 game_no 부여
+    sort_cols_gn = [c for c in SORT_FOR_GAME_NO if c in df.columns]
+    df = df.sort_values(sort_cols_gn, kind="mergesort", na_position="last").reset_index(drop=True)
+    gcols = [c for c in GAME_NO_GROUP_KEY if c in df.columns]
+    df["game_no"] = df.groupby(gcols, sort=False).cumcount() + 1
+    match_key = gcols  # 검증용 중복 카운트 키
 
     # 강수 결측은 0으로 처리합니다.
     rain_col = "일합계강수량(mm)"
@@ -115,22 +159,24 @@ def main() -> None:
         print(f"[검증] 관중수 5만 초과 또는 음수: {int(suspicious.sum())}건 — 원본 확인 권장")
 
     dup_key = [c for c in ["경기날짜", "홈팀", "방문팀", "구장", "game_no"] if c in df.columns]
-    if len(dup_key) >= 4 and df.duplicated(subset=dup_key).any():
+    if len(dup_key) >= 5 and df.duplicated(subset=dup_key).any():
         print(f"[검증] 경고: 키 {dup_key} 기준 완전 중복 행이 있습니다.")
 
-    # 읽기 편한 순서로 정렬합니다.
-    sort_cols = [c for c in ["연도", "경기날짜", "경기일시", "홈팀", "방문팀", "구장", "game_no"] if c in df.columns]
-    df = df.sort_values(sort_cols).reset_index(drop=True)
+    # build_features 시계열과 동일: 연도 → 경기날짜 → game_no (동순은 경기일시 순)
+    sort_cols = [c for c in SORT_OUTPUT if c in df.columns]
+    df = df.sort_values(sort_cols, kind="mergesort", na_position="last").reset_index(drop=True)
+    df = df.drop(columns=["_ts_for_sort"], errors="ignore")
 
     df.to_csv(output_path, index=False, encoding="utf-8-sig")
 
-    dup_count = int(df.duplicated(match_key).sum())
+    dh_groups = int((df.groupby(match_key, observed=True).size() > 1).sum())
     rain_null = int(df[rain_col].isna().sum())
     print("-" * 50)
     print(f"saved: {output_path}")
     print(f"rows: {len(df)}, cols: {len(df.columns)}")
     print(f"inputs: {[str(p) for p in input_paths]}")
-    print(f"duplicate_by_match_key(연도·경기일시·홈·방문·구장): {dup_count}")
+    print(f"sort_output: {' → '.join([c for c in sort_cols if c != '_ts_for_sort'])}")
+    print(f"더블헤더 추정(동일 연도·경기날짜·홈·방문·구장 키가 2행 이상인 날·대진): {dh_groups}건")
     print(f"rain_missing_after_fill: {rain_null}")
     if "구장" in df.columns:
         print("구장별 행 수 (상위 5):")
