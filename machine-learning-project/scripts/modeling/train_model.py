@@ -38,6 +38,13 @@ NUMERIC_FEATURES = [
     "is_weekend",
     "weekday_sin",
     "weekday_cos",
+    "home_prior_mean_att",
+    "visitor_prior_mean_att",
+    "home_last5_mean_att",
+    "visitor_last5_mean_att",
+    "home_draw_pct_in_league",
+    "visitor_away_draw_pct_in_league",
+    "home_visitor_prior_draw_diff",
 ]
 
 CATEGORICAL_FEATURES = [
