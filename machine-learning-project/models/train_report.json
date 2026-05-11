@@ -1,19 +1,46 @@
 {
   "n_samples": 1436,
-  "n_train": 1148,
-  "n_test": 288,
+  "n_train": 1149,
+  "n_test": 287,
   "target": "관중수",
-  "random_state": 42,
+  "split": "temporal_연도_월_주차_ISO",
   "test_size": 0.2,
+  "random_state": 42,
   "data_path": "/Users/mymac/Machine-Learning-Project/machine-learning-project/data/processed/kbo_train_ready.csv",
+  "train_time_bounds": {
+    "연도_min": 2024,
+    "연도_max": 2025,
+    "월_min": 3,
+    "월_max": 10,
+    "주차_ISO_min": 12,
+    "주차_ISO_max": 40,
+    "rows": 1149
+  },
+  "test_time_bounds": {
+    "연도_min": 2025,
+    "연도_max": 2025,
+    "월_min": 7,
+    "월_max": 10,
+    "주차_ISO_min": 28,
+    "주차_ISO_max": 40,
+    "rows": 287
+  },
   "baseline_dummy_mean": {
-    "mae": 4589.77764469609,
-    "rmse": 5477.429482658581,
-    "r2": -0.0011021594999036655
+    "mae": 4670.633518617916,
+    "mse": 30872065.05688222,
+    "rmse": 5556.263587779311,
+    "r2": -0.031982251449514276
+  },
+  "baseline_stadium_mean": {
+    "mae": 3826.751136984634,
+    "mse": 18902112.51763477,
+    "rmse": 4347.655979678564,
+    "r2": 0.3681457784842217
   },
   "random_forest": {
-    "mae": 2079.0006058742206,
-    "rmse": 2821.0265714229017,
-    "r2": 0.734454368228002
+    "mae": 2485.519713451622,
+    "mse": 10517312.566498147,
+    "rmse": 3243.040635961589,
+    "r2": 0.6484303890402223
   }
 }

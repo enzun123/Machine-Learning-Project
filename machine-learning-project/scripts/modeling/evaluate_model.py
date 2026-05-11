@@ -1,7 +1,7 @@
 """
 모델링 2단계: train_model.py 산출물로 테스트 세트 재평가
 
-출력: models/eval_report.json
+출력: models/eval_report.json (잔차 요약, 구장별 MAE 포함)
 """
 
 from __future__ import annotations
@@ -34,6 +34,7 @@ def main() -> None:
     data_path = root / "data" / "processed" / "kbo_train_ready.csv"
     model_path = root / "models" / "attendance_rf_pipeline.joblib"
     idx_path = root / "models" / "test_indices.npy"
+    train_report_path = root / "models" / "train_report.json"
 
     if not model_path.exists():
         print(f"FATAL: 모델 없음 — 먼저 실행: python3 scripts/modeling/train_model.py\n{model_path}", file=sys.stderr)
@@ -52,14 +53,36 @@ def main() -> None:
     y_pred = pipe.predict(X_test)
 
     mae = mean_absolute_error(y_test, y_pred)
-    rmse = mean_squared_error(y_test, y_pred) ** 0.5
+    mse = mean_squared_error(y_test, y_pred)
+    rmse = mse**0.5
     r2 = r2_score(y_test, y_pred)
+    residual = y_test.to_numpy(dtype=float) - y_pred
+
+    mae_by_stadium = (
+        pd.DataFrame({"구장": d_test["구장"].values, "ae": np.abs(residual)})
+        .groupby("구장", observed=True)["ae"]
+        .mean()
+        .sort_values(ascending=False)
+    )
+
+    split_info = {}
+    if train_report_path.exists():
+        with open(train_report_path, encoding="utf-8") as f:
+            tr = json.load(f)
+        split_info = {
+            "split": tr.get("split"),
+            "test_time_bounds": tr.get("test_time_bounds"),
+        }
 
     print("-" * 50)
     print("[2단계] 테스트 세트 평가")
+    if split_info.get("split"):
+        print(f"분할 방식: {split_info['split']}")
     print(f"MAE:  {mae:.2f}")
+    print(f"MSE:  {mse:.2f}")
     print(f"RMSE: {rmse:.2f}")
     print(f"R²:   {r2:.4f}")
+    print(f"잔차 |평균|: {np.mean(np.abs(residual)):.2f} | 최대 절대오차: {np.max(np.abs(residual)):.2f}")
 
     r = permutation_importance(
         pipe,
@@ -73,21 +96,25 @@ def main() -> None:
     print("\nPermutation importance (상위 10개):")
     print(imp.head(10).to_string())
 
+    print("\n구장별 평균 절대오차 (상위 5)")
+    print(mae_by_stadium.head(5).to_string())
+
     out_eval = root / "models" / "eval_report.json"
+    payload = {
+        "mae": float(mae),
+        "mse": float(mse),
+        "rmse": float(rmse),
+        "r2": float(r2),
+        "residual_mean": float(np.mean(residual)),
+        "residual_std": float(np.std(residual)),
+        "max_abs_error": float(np.max(np.abs(residual))),
+        "permutation_importance_top10": imp.head(10).to_dict(),
+        "mae_by_stadium_top15": mae_by_stadium.head(15).to_dict(),
+        **split_info,
+    }
     with open(out_eval, "w", encoding="utf-8") as f:
-        json.dump(
-            {
-                "mae": float(mae),
-                "rmse": float(rmse),
-                "r2": float(r2),
-                "permutation_importance_top10": imp.head(10).to_dict(),
-            },
-            f,
-            ensure_ascii=False,
-            indent=2,
-        )
+        json.dump(payload, f, ensure_ascii=False, indent=2)
     print(f"\n저장: {out_eval}")
-    print("다음: python3 scripts/modeling/predict.py")
     print("-" * 50)
 
 
