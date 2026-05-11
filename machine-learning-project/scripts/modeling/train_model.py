@@ -18,12 +18,18 @@ from pathlib import Path
 import joblib
 import numpy as np
 import pandas as pd
-from sklearn.compose import ColumnTransformer
+from sklearn.compose import ColumnTransformer, TransformedTargetRegressor
 from sklearn.dummy import DummyRegressor
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
+
+try:
+    from lightgbm import LGBMRegressor
+    HAS_LGBM = True
+except Exception:
+    HAS_LGBM = False
 
 TARGET = "관중수"
 
@@ -36,8 +42,23 @@ NUMERIC_FEATURES = [
     "is_rain",
     "is_hot",
     "is_weekend",
+    "is_friday",            # [수정5]
+    "is_saturday",          # [수정5]
+    "is_sunday",            # [수정5]
     "weekday_sin",
     "weekday_cos",
+    "is_small_stadium",          # [수정7]
+    "is_derby",                  # 더비 매치업
+    "is_season_opener",          # 트랙1
+    "is_childrens_day",          # 트랙1
+    "home_win_rate",             # [수정3]
+    "visitor_win_rate",          # [수정3]
+    "win_rate_diff",             # [수정3]
+    "home_gb_to_5th",            # 트랙1
+    "visitor_gb_to_5th",         # 트랙1
+    "is_pennant_race",           # 트랙1
+    "playoff_urgency",           # 트랙1
+    "month_x_playoff_urgency",   # 트랙1
     "home_prior_mean_att",
     "visitor_prior_mean_att",
     "home_last5_mean_att",
@@ -45,6 +66,8 @@ NUMERIC_FEATURES = [
     "home_draw_pct_in_league",
     "visitor_away_draw_pct_in_league",
     "home_visitor_prior_draw_diff",
+    "matchup_prior_mean_att",    # [수정6]
+    "season_progress",           # [수정4]
 ]
 
 CATEGORICAL_FEATURES = [
@@ -120,7 +143,29 @@ def stadium_mean_baseline_predict(X_train: pd.DataFrame, y_train: pd.Series, X_t
     return mapped.fillna(overall).to_numpy(dtype=float)
 
 
-def build_pipeline() -> Pipeline:
+def _load_best_params(root: Path) -> dict:
+    """models/best_params.json 이 있으면 최적 파라미터 반환, 없으면 기본값."""
+    p = root / "models" / "best_params.json"
+    if p.exists():
+        with open(p, encoding="utf-8") as f:
+            data = json.load(f)
+        params = data.get("best_params", {})
+        print(f"[best_params.json 적용] {params}")
+        return params
+    return {}
+
+
+def build_pipeline(root: Path | None = None) -> TransformedTargetRegressor:
+    """
+    RandomForest + log1p 타깃 변환.
+    models/best_params.json 가 있으면 튜닝된 파라미터 자동 적용.
+    없으면 기본값(n_estimators=300, max_depth=15, min_samples_leaf=4) 사용.
+    """
+    defaults = {"n_estimators": 300, "max_depth": 15, "min_samples_leaf": 4, "max_features": 1.0}
+    if root is not None:
+        tuned = _load_best_params(root)
+        defaults.update(tuned)
+
     pre = ColumnTransformer(
         transformers=[
             (
@@ -132,13 +177,20 @@ def build_pipeline() -> Pipeline:
         ]
     )
     reg = RandomForestRegressor(
-        n_estimators=300,
-        max_depth=None,
-        min_samples_leaf=4,
+        n_estimators=int(defaults["n_estimators"]),
+        max_depth=int(defaults["max_depth"]) if defaults["max_depth"] is not None else None,
+        min_samples_leaf=int(defaults["min_samples_leaf"]),
+        max_features=float(defaults["max_features"]),
+        criterion="absolute_error",
         random_state=RANDOM_STATE,
         n_jobs=-1,
     )
-    return Pipeline([("preprocess", pre), ("model", reg)])
+    inner = Pipeline([("preprocess", pre), ("model", reg)])
+    return TransformedTargetRegressor(
+        regressor=inner,
+        func=np.log1p,
+        inverse_func=np.expm1,
+    )
 
 
 def _split_time_bounds(df: pd.DataFrame, idx: np.ndarray) -> dict:
@@ -182,7 +234,7 @@ def main() -> None:
 
     y_stadium = stadium_mean_baseline_predict(X_train, y_train, X_test)
 
-    pipe = build_pipeline()
+    pipe = build_pipeline(root)
     pipe.fit(X_train, y_train)
     y_pred = pipe.predict(X_test)
 
@@ -199,7 +251,9 @@ def main() -> None:
         "test_time_bounds": _split_time_bounds(df, idx_test),
         "baseline_dummy_mean": _metrics(y_test, y_dummy),
         "baseline_stadium_mean": _metrics(y_test, y_stadium),
-        "random_forest": _metrics(y_test, y_pred),
+        "model": _metrics(y_test, y_pred),
+        "model_type": "RandomForest",
+        "log_target_transform": True,
     }
 
     model_path = out_dir / "attendance_rf_pipeline.joblib"
@@ -213,7 +267,8 @@ def main() -> None:
         json.dump(report, f, ensure_ascii=False, indent=2)
 
     print("-" * 50)
-    print("[1단계] 학습 완료 — RandomForest 회귀 (시간 순 테스트)")
+    mtype = report["model_type"]
+    print(f"[1단계] 학습 완료 — {mtype} + log1p 타깃 변환 (시간 순 테스트)")
     print(f"테스트 기간(대략): 연도 {report['test_time_bounds']['연도_min']}–{report['test_time_bounds']['연도_max']}")
     print(f"모델: {model_path}")
     print(f"테스트 인덱스: {idx_path}")
@@ -229,9 +284,9 @@ def main() -> None:
         f"R²: {report['baseline_stadium_mean']['r2']:.4f}"
     )
     print(
-        f"RandomForest       MAE: {report['random_forest']['mae']:.2f} | "
-        f"RMSE: {report['random_forest']['rmse']:.2f} | "
-        f"R²: {report['random_forest']['r2']:.4f}"
+        f"{mtype:18s} MAE: {report['model']['mae']:.2f} | "
+        f"RMSE: {report['model']['rmse']:.2f} | "
+        f"R²: {report['model']['r2']:.4f}"
     )
     print("-" * 50)
 
