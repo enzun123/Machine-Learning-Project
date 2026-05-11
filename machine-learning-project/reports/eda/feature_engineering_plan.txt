@@ -8,13 +8,12 @@ KBO 관중수 예측 - EDA 기반 피처엔지니어링 핸드오프
 - 원천 데이터: data/processed/final_dataset.csv
 - 구장 수용인원: data/external/kbo_stadium_info.csv
 - EDA 코드: scripts/eda/run_eda.py
-- 주요 시각화:
   - reports/eda/figures/01_target_attendance_distribution.png
   - reports/eda/figures/02_categorical_barplots.png
   - reports/eda/figures/03_categorical_boxplots.png
   - reports/eda/figures/04_stadium_capacity_ratio.png
   - reports/eda/figures/05_weather_correlation_heatmap.png
-  - reports/eda/figures/06_rainy_vs_non_rainy_boxplot.png
+  - reports/eda/figures/06_rainy_vs_non_rainy.png
   - reports/eda/figures/07_temperature_scatter.png
 
 [3] EDA 핵심 인사이트 요약

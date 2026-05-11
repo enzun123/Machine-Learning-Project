@@ -2,7 +2,10 @@
 feat/eda: `final_dataset.csv` 기준 탐색 전용.
 
 - 목적: 피처 설계 아이디어·리포트 생성. `kbo_train_ready` / 모델 입력 컬럼은 여기서 수정하지 않음.
-- 실행: 프로젝트 루트에서 `python3 machine-learning-project/scripts/eda/run_eda.py`
+- 구장 별칭: `common.stadium_aliases.STADIUM_ALIAS` (전처리·build_features와 동일 정본).
+- 산출물: `reports/eda/figures/*.png` 및 `reports/eda/eda_summary.md`. 스크립트를 실행할 때마다
+  같은 경로에 덮어쓰기로 갱신한다. 요약·그림을 Git에 올릴지는 팀에서 선택한다.
+- 실행: `machine-learning-project` 디렉터리에서 `python3 scripts/eda/run_eda.py`
 """
 
 from __future__ import annotations
