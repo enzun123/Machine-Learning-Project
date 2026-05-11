@@ -7,6 +7,7 @@ feat/eda: `final_dataset.csv` 기준 탐색 전용.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -15,17 +16,17 @@ import seaborn as sns
 
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
+_scripts_dir = Path(__file__).resolve().parents[1]
+if str(_scripts_dir) not in sys.path:
+    sys.path.insert(0, str(_scripts_dir))
+from common.stadium_aliases import STADIUM_ALIAS
+
 DATA_PATH = ROOT_DIR / "data" / "processed" / "final_dataset.csv"
 STADIUM_INFO_PATH = ROOT_DIR / "data" / "external" / "kbo_stadium_info.csv"
 OUTPUT_DIR = ROOT_DIR / "reports" / "eda"
 FIG_DIR = OUTPUT_DIR / "figures"
 SUMMARY_PATH = OUTPUT_DIR / "eda_summary.md"
 WEEKDAY_ORDER = ["월", "화", "수", "목", "금", "토", "일"]
-STADIUM_ALIAS_MAP = {
-    # preprocess / build_features 와 동일하게 통일
-    "한밭": "대전",
-    "문학": "인천",
-}
 
 
 def load_data() -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -57,8 +58,8 @@ def load_data() -> tuple[pd.DataFrame, pd.DataFrame]:
     stadium_df = stadium_df.dropna(subset=["구장", "최대수용인원"]).copy()
 
     # 구장 명칭 alias를 통합해 동일 구장으로 계산합니다.
-    df["구장"] = df["구장"].replace(STADIUM_ALIAS_MAP)
-    stadium_df["구장"] = stadium_df["구장"].replace(STADIUM_ALIAS_MAP)
+    df["구장"] = df["구장"].replace(STADIUM_ALIAS)
+    stadium_df["구장"] = stadium_df["구장"].replace(STADIUM_ALIAS)
     stadium_df = stadium_df.drop_duplicates("구장")
     return df, stadium_df
 

@@ -30,9 +30,10 @@ from pathlib import Path
 import pandas as pd
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
-
-# build_features.py 와 동일 — 구장 수용·기상 조인 일관성
-STADIUM_ALIAS = {"한밭": "대전", "문학": "인천"}
+_scripts_dir = Path(__file__).resolve().parents[1]
+if str(_scripts_dir) not in sys.path:
+    sys.path.insert(0, str(_scripts_dir))
+from common.stadium_aliases import STADIUM_ALIAS
 
 # build_features 시계열 정렬과 맞춤. 더블헤더 순서는 `_ts_for_sort`(경기일시 파싱)로만 구분.
 SORT_FOR_GAME_NO = ["연도", "경기날짜", "홈팀", "방문팀", "구장", "_ts_for_sort"]

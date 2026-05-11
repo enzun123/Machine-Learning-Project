@@ -1,8 +1,8 @@
 """
 구장별 최대 수용 인원 마스터 생성 (feat/stadium-capacity)
 
-- 출력: data/external/kbo_stadium_info.csv (build_features·전처리에서 정본으로 사용)
-- 전처리/피처의 구장 별칭: 문학→인천, 한밭→대전 은 preprocess / build_features 의 STADIUM_ALIAS 와 맞출 것
+- 수용 인원 정본: data/external/kbo_stadium_info.csv (아래 STADIUM_ROWS를 수정한 뒤 이 스크립트로 갱신)
+- 경기 `구장` 별칭 정본: scripts/common/stadium_aliases.py 의 STADIUM_ALIAS (전처리·피처·EDA에서 동일 import)
 
 실행:
   cd machine-learning-project
@@ -46,7 +46,7 @@ def main() -> None:
     df = pd.DataFrame(STADIUM_ROWS, columns=["구단", "구장", "최대수용인원"])
     df.to_csv(OUTPUT_PATH, index=False, encoding="utf-8-sig")
     print(f"저장 완료: {OUTPUT_PATH}")
-    print(f"행 수: {len(df)} (구장 문자열 기준 조인 — 별칭은 전처리/피처 스크립트에서 통일)")
+    print(f"행 수: {len(df)} (구장 문자열 기준 조인 — 별칭은 common.stadium_aliases.STADIUM_ALIAS)")
 
 
 if __name__ == "__main__":

@@ -1,12 +1,15 @@
 import os
 import sys
 from collections import defaultdict, deque
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-# 구장명 통일(kbo_stadium_info 조인용)
-STADIUM_ALIAS = {"한밭": "대전", "문학": "인천"}
+_scripts_dir = Path(__file__).resolve().parents[1]
+if str(_scripts_dir) not in sys.path:
+    sys.path.insert(0, str(_scripts_dir))
+from common.stadium_aliases import STADIUM_ALIAS
 
 # EDA 명세: {0, (0,1], (1,5], (5,inf)} — pandas read_csv 기본 NA와 겹치지 않게 No_Rain 사용
 RAIN_BINS = [-1.0, 0.0, 1.0, 5.0, float("inf")]
