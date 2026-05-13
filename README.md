@@ -1,188 +1,49 @@
-# ⚾ KBO 관중 예측 ML 프로젝트
+# 기상 API 권한·POP 폴백 보강 (`fix/ui`)
 
-> KBO 경기별 관중 수를 머신러닝으로 예측하는 엔드투엔드 파이프라인 + Streamlit 웹앱
+**브랜치:** `fix/ui`
 
----
+기상청 **API허브 동네예보(typ02)** 호출 시 **인증·이용신청(권한) 오류**를 본문 `response.header`가 아니라 **`result.status` / `message` 봉투**로 받는 경우를 처리하고, 단기 POP이 **개시 3시간 전(`t3`)** 에 맞지 않을 때 **경기일 12:00(KST)** 근처 예보 시각으로 한 번 더 조회합니다. Streamlit **기상 디버그** JSON에 `pop_anchor_kst` 필드를 노출합니다.
 
-## 📌 프로젝트 개요
+## 상위 브랜치
 
-경기 일정, 구장 정보, 기상 데이터, 팀 순위를 결합해 **RandomForest 기반 회귀 모델**로 KBO 경기의 관중 수를 예측합니다. 수집 → 전처리 → 피처 생성 → 학습 → 추론까지 전 과정을 자동화하며, **Streamlit UI**를 통해 손쉽게 인터랙티브하게 예측 결과를 확인할 수 있습니다.
+- **`feat/2026-schedule-and-weather`** — 동네예보·우천 참고 UI, `kma_vilage_fcst.py` 도입 등  
+- **`fix/ui`** — 위 커밋 이후 **API 권한 메시지·POP 앵커**만 추가 수정 (`df6f39b fix : api 권한 문제 해결`)
 
----
+## 변경 파일
 
-## 📁 저장소 구조
+| 파일 | 내용 |
+|------|------|
+| `scripts/common/kma_vilage_fcst.py` | `_apihub_result_envelope_err`로 typ02 봉투형 오류 파싱, `활용신청` 문구 감지 시 사용자 안내 메시지, `_join_fcst_errors`, 단기 후보 `n=10` 확대, `game_day_noon_kst` + POP 재시도, `forecast_ref_for_rain_cancel_rules`에 `pop_anchor_kst`, 우천 참고 문구 보강 |
+| `scripts/app/streamlit_app.py` | `STREAMLIT_DEBUG_WEATHER=1`일 때 디버그 JSON에 **`pop_anchor_kst`** 키 포함 |
 
-```
-Machine-Learning-Project/
-├── README.md
-├── .gitignore
-└── machine-learning-project/
-    ├── data/
-    │   ├── raw/               # 연도별 일별 관중 원시 데이터
-    │   ├── interim/           # 관중 + 기상 병합 중간 데이터
-    │   ├── processed/         # final_dataset, kbo_train_ready (학습용 최종 테이블)
-    │   └── external/          # 구장 정원, 일별 순위, 기상 캐시 등
-    ├── models/                # 학습된 파이프라인(.joblib), 리포트, 튜닝 결과
-    ├── reports/eda/           # EDA 산출물 (figures, eda_summary.md)
-    └── scripts/
-        ├── app/
-        │   └── streamlit_app.py          # 웹 UI
-        ├── common/
-        │   └── stadium_aliases.py        # 구장 이름 별칭 공통 모듈
-        ├── data_collection/              # 크롤링 · 기상 · 최근 N경기 수집
-        ├── preprocessing/               # 전처리 병합
-        ├── features/
-        │   └── build_features.py        # 피처 생성
-        ├── modeling/                    # 학습 · 평가 · 예측 · 튜닝
-        └── eda/
-            └── run_eda.py               # EDA 리포트 생성
-```
+## 동작 요약
 
----
+1. **401 / 활용신청**류 응답을 `response.header`만이 아니라 **`body["result"]`** 에서도 읽음.  
+2. 실패 메시지 여러 단계를 **`_join_fcst_errors`** 로 합치고, **`활용신청`** 포함 시 **동네예보 API 승인·`KMA_APIHUB_AUTH_KEY`** 확인 안내로 분기.  
+3. 단기 POP: `t3` 실패 시 **경기일 12:00 KST** 근처로 `vilage_pop_at_nearest_fcst` 재시도 → 성공 시 `pop_anchor_kst`와 `detail`에 이유 기록.  
+4. `rainout_cancel_guidance`에서 POP만 쓴 경우 **낮 12:00 앵커** 사용 여부를 한 줄로 표시.
 
-## 🔄 데이터 파이프라인
-
-```
-[kbo_scraping.py]         →  data/raw/kbo_{연도}_attendance.csv
-[kbo_standings_scrape.py] →  data/external/kbo_standings_daily.csv
-[kbo_size.py]             →  data/external/kbo_stadium_info.csv
-        ↓
-[weather_api.py]          →  data/interim/kbo_*_attendance_weather.csv
-        ↓
-[preprocess_attendance_weather.py] → data/processed/final_dataset.csv
-        ↓
-[build_features.py]       →  data/processed/kbo_train_ready.csv
-        ↓
-[train_model.py]          →  models/attendance_rf_pipeline.joblib
-        ↓
-[evaluate_model.py]       →  models/eval_report.json
-        ↓
-[streamlit_app.py]        →  🌐 웹 UI에서 실시간 예측
-```
-
----
-
-## 🚀 실행 방법
-
-### 사전 준비
+## 환경 변수
 
 ```bash
-pip install pandas numpy requests beautifulsoup4 selenium webdriver-manager \
-            scikit-learn joblib matplotlib seaborn streamlit optuna lightgbm
+export KMA_APIHUB_AUTH_KEY="API허브_인증키"
 ```
 
-### 권장 실행 순서
+- 마이페이지에서 **`getUltraSrtFcst`**, **`getVilageFcst`**(동네예보)에 해당 키가 승인되어 있는지 확인.  
+- Streamlit **Secrets**에 넣는 경우도 동일 변수명으로 맞추면 됩니다.
+
+## 확인 방법
 
 ```bash
 cd machine-learning-project
-
-# 1) 원시 데이터 수집 (Selenium + Chrome 필요)
-python3 scripts/data_collection/kbo_scraping.py
-python3 scripts/data_collection/kbo_standings_scrape.py
-
-# 2) 구장 수용 인원 CSV 생성
-python3 scripts/data_collection/kbo_size.py
-
-# 3) 기상 데이터 병합 → interim
-python3 scripts/data_collection/weather_api.py
-
-# 4) interim → final_dataset
-python3 scripts/preprocessing/preprocess_attendance_weather.py
-
-# 5) 피처 생성 → kbo_train_ready
-python3 scripts/features/build_features.py
-
-# 6) (선택) EDA 리포트 생성
-python3 scripts/eda/run_eda.py
-
-# 7) 모델 학습
-python3 scripts/modeling/train_model.py
-
-# 8) (선택) 평가 / 하이퍼파라미터 튜닝
-python3 scripts/modeling/evaluate_model.py
-python3 scripts/modeling/tune_hyperparams.py --n-trials 50
-```
-
-> 💡 원시 CSV가 이미 있는 경우 1)~3) 단계를 건너뛰고 `interim` 또는 `processed` 단계부터 시작할 수 있습니다.
-
-### Streamlit 웹앱 실행
-
-```bash
-cd machine-learning-project
+export STREAMLIT_DEBUG_WEATHER=1
+export KMA_APIHUB_AUTH_KEY=...
 streamlit run scripts/app/streamlit_app.py
 ```
 
-> 웹앱 실행 전에 반드시 `train_model.py`로 모델을 먼저 학습해 두세요.  
-> 앱은 `kbo_2025_attendance_weather.csv` 파일을 `scripts/app/` 또는 `data/` 경로에서 자동 탐색합니다.
+사이드바·예보 참고 흐름에서 오류 시 메시지가 **권한(활용신청)** 인지 **일반 네트워크/시각** 문제인지 구분되는지 확인합니다.
 
----
+## 문의
 
-## 🖥️ Streamlit UI 기능
-
-| 기능 | 설명 |
-|------|------|
-| 사이드바 입력 | 경기 날짜, 홈·원정팀, 구장 선택 |
-| 기상 슬라이더 | 기온, 강수량 등 기상 조건 조정 |
-| KBO 자동 반영 | 최근 경기 관중 데이터 자동 업데이트 옵션 |
-| 모델 선택 | RandomForest 파이프라인 사용 여부 토글 |
-| 예측 시각화 | 예측 결과 및 관련 통계 차트 제공 |
-
----
-
-## 📊 주요 스크립트
-
-| 스크립트 | 역할 |
-|----------|------|
-| `data_collection/kbo_scraping.py` | 일별 관중·경기 메타 크롤링 |
-| `data_collection/kbo_standings_scrape.py` | 일자별 팀 순위·승률 스냅샷 수집 |
-| `data_collection/kbo_size.py` | 구단·구장별 최대 수용 인원 CSV 생성 |
-| `data_collection/weather_api.py` | 기상청 API 연동 → interim CSV 생성 |
-| `data_collection/fetch_recent_crowd.py` | 구장별 최근 N경기 관중 추출 |
-| `preprocessing/preprocess_attendance_weather.py` | interim 병합 → `final_dataset.csv` |
-| `features/build_features.py` | 학습용 피처 생성 → `kbo_train_ready.csv` |
-| `modeling/train_model.py` | 시간 순 홀드아웃 검증 + RF 파이프라인 학습 |
-| `modeling/evaluate_model.py` | 테스트 구간 재평가 및 리포트 저장 |
-| `modeling/predict.py` | 저장된 모델로 배치 예측 |
-| `modeling/tune_hyperparams.py` | Optuna + TimeSeriesSplit 하이퍼파라미터 튜닝 |
-| `eda/run_eda.py` | 탐색적 데이터 분석 리포트 생성 |
-| `app/streamlit_app.py` | 관람 수요 예측 웹앱 |
-| `common/stadium_aliases.py` | 구장 이름 별칭 공통 정의 |
-
----
-
-## ⚙️ 모델 정보
-
-- **알고리즘**: RandomForest Regressor (scikit-learn Pipeline)
-- **검증 방식**: 시간 순 홀드아웃 (Time-based holdout)
-- **튜닝**: Optuna + TimeSeriesSplit (선택 사항)
-- **저장 포맷**: `models/attendance_rf_pipeline.joblib`
-- **선택 모델**: LightGBM (`train_model.py` 내 선택적 사용)
-
----
-
-## 🔑 기상 API 설정
-
-기상청 API 인증키는 현재 **`scripts/data_collection/weather_api.py` 상단 변수**로만 설정되어 있습니다.  
-저장소에 키를 커밋하지 않으려면 로컬에서만 수정하거나, 추후 `os.environ` 등으로 분리하는 편이 안전합니다.
-
----
-
-## 🌿 Git 브랜치 전략
-
-| 브랜치 | 용도 |
-|--------|------|
-| `main` | 배포용 안정 버전 |
-| `develop` | 기능 통합 브랜치 |
-| `feat/*` / `feature/*` | 기능별 개발 브랜치 |
-
----
-
-## 📝 라이선스
-
-저장소 정책에 맞게 `LICENSE` 파일을 추가하세요.
-
----
-
-## 🙋 문의
-팀장:허은준
-연락처:enzun123@gmail.com
+- **팀장:** 허은준  
+- **연락:** enzun123@gmail.com  
