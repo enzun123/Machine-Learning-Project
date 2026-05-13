@@ -1334,7 +1334,20 @@ if _wx_debug_ui:
         stadium,
         _gs_fc.isoformat(),
         str(_t3),
-        {k: _ref.get(k) for k in ("ok", "mode", "base", "nx", "ny", "detail", "msg", "target_kst")},
+        {
+            k: _ref.get(k)
+            for k in (
+                "ok",
+                "mode",
+                "base",
+                "nx",
+                "ny",
+                "detail",
+                "msg",
+                "target_kst",
+                "pop_anchor_kst",
+            )
+        },
     )
     with st.expander("기상·API 디버그 (`STREAMLIT_DEBUG_WEATHER=1`)", expanded=False):
         st.json(_ref)

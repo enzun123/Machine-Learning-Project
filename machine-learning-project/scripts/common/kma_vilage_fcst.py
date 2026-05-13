@@ -4,6 +4,7 @@
 - 초단기: ``getUltraSrtFcst`` — 발표 시각 기준 약 6시간 구간, RN1.
   (발표 후보는 **현재 시각**과 **개시 3시간 전 시각**을 앵커로 합쳐, 같은 날 참고 시각에 맞춰 조회합니다.)
 - 단기(폴백): ``getVilageFcst`` — 3시간 단위 발표, POP·PCP 등.
+  ``t3``에 맞는 POP이 비면 **경기일 12:00(KST)** 근처 예보 시각으로 한 번 더 시도합니다.
 
 인증: ``KMA_APIHUB_AUTH_KEY`` (동일 계정에서 **동네예보** 활용신청 필요).
 
@@ -86,6 +87,29 @@ def redact_api_secrets(text: object) -> str:
     return _RE_API_SECRET.sub(r"\1***", str(text))
 
 
+def _join_fcst_errors(*errs: str | None) -> str | None:
+    """여러 단계 실패 사유를 한 줄로 합칠 때, 동일 문구는 한 번만 표시."""
+    parts: list[str] = []
+    seen: set[str] = set()
+    for x in errs:
+        if not x:
+            continue
+        s = str(redact_api_secrets(x)).strip()
+        if not s or s in seen:
+            continue
+        seen.add(s)
+        parts.append(s)
+    return " | ".join(parts) if parts else None
+
+
+def _kma_errors_imply_subscription_needed(*errs: str | None) -> bool:
+    needle = "활용신청"
+    for x in errs:
+        if x and needle in str(x):
+            return True
+    return False
+
+
 def _short_net_err(msg: str) -> str:
     m = redact_api_secrets(msg)
     low = m.lower()
@@ -111,7 +135,27 @@ def _items_from_body(body: dict) -> list[dict]:
     return [it]
 
 
+def _apihub_result_envelope_err(body: dict) -> str | None:
+    """
+    API허브(typ02)는 인증·권한 오류 시 ``response.header`` 대신
+    ``{"result": {"status": 401, "message": "..."}}`` 를 돌리는 경우가 있다.
+    """
+    r = body.get("result")
+    if not isinstance(r, dict):
+        return None
+    st = r.get("status")
+    msg = str(r.get("message") or r.get("msg") or "").strip()
+    if st in (None, 200, "200", 0, "0"):
+        return None
+    if msg:
+        return msg
+    return f"API허브 오류 (status={st!r})"
+
+
 def _api_err_msg(body: dict) -> str | None:
+    hub = _apihub_result_envelope_err(body)
+    if hub:
+        return hub
     try:
         h = (body.get("response") or {}).get("header") or {}
         code = str(h.get("resultCode", "")).strip()
@@ -384,7 +428,7 @@ def vilage_pop_at_nearest_fcst(
     base_used = None
     last_err = None
 
-    for bd, bt in _vilage_base_candidates(datetime.now(KST), n=6):
+    for bd, bt in _vilage_base_candidates(datetime.now(KST), n=10):
         items, err = fetch_vilage_fcst(nx, ny, bd, bt, auth)
         if err:
             last_err = err
@@ -422,6 +466,25 @@ def three_hours_before_game_start(game_start: pd.Timestamp) -> pd.Timestamp:
     return t - pd.Timedelta(hours=3)
 
 
+def game_day_noon_kst(game_start: pd.Timestamp) -> pd.Timestamp:
+    """경기 **일자**(KST)의 12:00 — 단기 POP이 ``t3``에 맞추기 어려울 때 보조 앵커."""
+    gs = pd.Timestamp(game_start)
+    if gs.tzinfo is None:
+        gs = gs.tz_localize(KST)
+    else:
+        gs = gs.tz_convert(KST)
+    return pd.Timestamp(
+        year=gs.year,
+        month=gs.month,
+        day=gs.day,
+        hour=12,
+        minute=0,
+        second=0,
+        microsecond=0,
+        tz=KST,
+    )
+
+
 def forecast_ref_for_rain_cancel_rules(
     stadium: str,
     game_start: pd.Timestamp,
@@ -431,7 +494,8 @@ def forecast_ref_for_rain_cancel_rules(
     규칙 기반 참고용 요약 (우천 **취소 예측 아님**).
 
     - 가능하면 초단기 RN1(개시 3시간 전 정시 근처).
-    - 실패 시 단기 POP 폴백.
+    - 실패 시 단기 POP을 ``t3``에 맞춰 조회하고, 그래도 없으면 **경기일 12:00(KST)** 근처
+      단기 POP으로 한 번 더 시도한다(단기는 며칠 앞 예보를 포함).
     """
     auth = (auth_key or _auth_key()).strip()
     if not auth:
@@ -478,24 +542,53 @@ def forecast_ref_for_rain_cancel_rules(
             "detail": None,
         }
 
-    pop, vbase, err_v = vilage_pop_at_nearest_fcst(nx, ny, t3, auth_key=auth)
+    pop, vbase, err_v_t3 = vilage_pop_at_nearest_fcst(nx, ny, t3, auth_key=auth)
+    pop_anchor: pd.Timestamp | None = None
+    err_v_noon: str | None = None
+    if pop is None:
+        noon = game_day_noon_kst(game_start)
+        if abs((noon - t3).total_seconds()) >= 900:
+            pop, vbase, err_v_noon = vilage_pop_at_nearest_fcst(nx, ny, noon, auth_key=auth)
+            if pop is not None:
+                pop_anchor = noon
+
     if pop is not None:
+        detail: str | None
+        if pop_anchor is not None:
+            detail = (
+                f"개시 3시간 전({t3.strftime('%m/%d %H:%M')} KST)에 맞는 단기 POP이 비어 "
+                f"경기일 낮 12:00 근처({pop_anchor.strftime('%m/%d %H:%M')} KST) 예보 시각으로 대체했습니다. "
+                "(언론에서 말하는 ‘개시 3시간 전’ 시각과는 다를 수 있습니다.)"
+            )
+            if err_u:
+                detail = f"{detail} (초단기: {redact_api_secrets(err_u)})"
+        else:
+            detail = err_u
         return {
             "ok": True,
             "mode": "vilage_pop",
             "pop_pct": float(pop),
             "base": vbase,
             "target_kst": str(t3),
+            "pop_anchor_kst": str(pop_anchor) if pop_anchor is not None else None,
             "nx": nx,
             "ny": ny,
-            "detail": err_u,
+            "detail": detail,
         }
 
-    raw = " | ".join(redact_api_secrets(x) for x in (err_u, err_v) if x)
-    msg = (
-        "현재 시각 기준으로 동네예보(초단기·단기)에서 개시 3시간 전 참고값을 가져오지 못했습니다. "
-        "경기 당일 또는 개시에 가까운 시점에 다시 확인해 보세요."
-    )
+    raw = _join_fcst_errors(err_u, err_v_t3, err_v_noon)
+    if _kma_errors_imply_subscription_needed(err_u, err_v_t3, err_v_noon):
+        msg = (
+            "기상청 API허브가 이 인증키에 대해 ‘활용신청이 필요한 API’로 응답했습니다. "
+            "마이페이지에서 **동네예보(초단기·단기) 조회**의 `getUltraSrtFcst`·`getVilageFcst`에 "
+            "승인된 키인지 확인하고, 환경변수 `KMA_APIHUB_AUTH_KEY`(또는 Streamlit secrets) 값과 "
+            "일치하는지 맞춰 보세요. 승인 직후에는 페이지를 새로고침해 다시 시도해 보세요."
+        )
+    else:
+        msg = (
+            "현재 시각 기준으로 동네예보(초단기·단기)에서 개시 3시간 전 참고값을 가져오지 못했습니다. "
+            "경기 당일 또는 개시에 가까운 시점에 다시 확인해 보세요."
+        )
     return {
         "ok": False,
         "msg": msg,
@@ -613,8 +706,15 @@ def rainout_cancel_guidance(ref: dict) -> dict[str, object]:
             headline = "비 가능성이 있는 편 — 취소·연기는 운영·심판 판단(참고)"
         else:
             headline = "비 가능성이 높게 보임 — 실제 취소·연기는 별도 판단(참고)"
+        pop_line = (
+            f"초단기 RN1 대신 단기 강수확률(POP) 약 {pop:.0f}% 만 사용했습니다."
+        )
+        if ref.get("pop_anchor_kst"):
+            pop_line += (
+                f" (개시 3시간 전 시각 대신 경기일 낮 앵커 {ref.get('pop_anchor_kst')} 근처 단기 예보)"
+            )
         lines = [
-            f"초단기 RN1 대신 단기 강수확률(POP) 약 {pop:.0f}% 만 사용했습니다.",
+            pop_line,
             body_plain,
             _DISC_RAINOUT,
         ]
