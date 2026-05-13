@@ -354,6 +354,34 @@ def _load_kbo_train_ready() -> pd.DataFrame | None:
     return pd.read_csv(p, encoding="utf-8-sig")
 
 
+def _hourly_rain_ref_band(hourly_mm: float) -> tuple[str, str, str]:
+    """우천 참고용 막대 문구. (제목, 본문, css suffix low|mid|high)."""
+    h = float(hourly_mm)
+    if h <= 0:
+        return (
+            "강수 거의 없음 (참고)",
+            "KBO·기상청 예보와 별개로, 슬라이더 기준으로는 약한 구간입니다.",
+            "low",
+        )
+    if h < 5:
+        return (
+            "5mm/h 미만 (참고)",
+            "개시 1시간 전 ‘시간당 5mm 이상’ 검토선보다 낮은 값입니다. 예보·실황은 별도 확인이 필요합니다.",
+            "low",
+        )
+    if h < 10:
+        return (
+            "5~10mm/h 부근 (참고)",
+            "당일 개시 전 검토·연기 등이 거론될 수 있는 구간으로 알려져 있습니다.",
+            "mid",
+        )
+    return (
+        "10mm/h 이상에 근접 (참고)",
+        "개시 3시간 전 ‘시간당 10mm 이상 예보’ 검토선에 가깝습니다. 절대 기준은 아닙니다.",
+        "high",
+    )
+
+
 # =========================
 # CSS 스타일
 # =========================
@@ -470,6 +498,37 @@ st.markdown("""
     margin-top: 20px;
 }
 
+.rain-risk-box {
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin-top: 14px;
+    margin-bottom: 8px;
+    font-size: 14px;
+    line-height: 1.55;
+    color: #e8eef5;
+}
+
+.rain-risk-low {
+    border: 1px solid #2ecc71;
+    background: rgba(46, 204, 113, 0.09);
+}
+
+.rain-risk-mid {
+    border: 1px solid #f39c12;
+    background: rgba(243, 156, 18, 0.12);
+}
+
+.rain-risk-high {
+    border: 1px solid #e74c3c;
+    background: rgba(231, 76, 60, 0.11);
+}
+
+.rain-risk-title {
+    font-weight: 700;
+    margin-bottom: 8px;
+    color: #fff;
+}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -522,12 +581,20 @@ temperature = st.sidebar.slider(
     23
 )
 
-rainfall = st.sidebar.slider(
-    "예상 강수량(mm)",
+hourly_rain_ref = st.sidebar.slider(
+    "시간당 강수·예보 (참고, mm/h)",
     0.0,
-    50.0,
-    0.0
+    30.0,
+    0.0,
+    0.5,
+    help=(
+        "KBO·보도에서 인용되는 **우천 검토선**과 비교하기 위한 참고값입니다. "
+        "아래 예측 관중 수에는 반영하지 않습니다."
+    ),
 )
+
+# 학습 파이프라인 호환: 일 합계 강수는 UI에서 받지 않고 무강수(0mm)로 고정
+rainfall = 0.0
 
 humidity = st.sidebar.slider(
     "예상 습도(%)",
@@ -542,14 +609,15 @@ use_rf_model = st.sidebar.checkbox(
     disabled=not _rf_artifacts_ok,
     help=(
         "`kbo_train_ready.csv`에서 홈·원정·구장이 가장 가까운 과거 행을 고른 뒤, "
-        "위 날짜·기온·강수·습도·정원을 덮어 RF로 예측합니다. "
+        "위 날짜·기온·습도·정원을 덮어 RF로 예측합니다. "
+        "일 합계 강수 피처는 UI에서 조정하지 않으며 0mm(No_Rain)로 둡니다. "
         "파일이 없거나 오류 시 아래 룰 기반만 사용합니다."
     ),
 )
 
 st.sidebar.caption(
-    "RF 사용 시: 학습 시와 같은 피처 범주(강수·기온·습도 버킷 등)로 넣습니다. "
-    "RF를 끄면 기온·강수·습도는 **룰 기반** 추정에만 쓰입니다."
+    "RF 사용 시: 학습 시와 같은 피처 범주로 넣되, **일 합계 강수는 0mm(No_Rain)** 로 고정됩니다. "
+    "RF를 끄면 기온·습도는 **룰 기반** 추정에만 쓰이며 비(강수) 룰은 적용되지 않습니다."
 )
 
 # =========================
@@ -621,14 +689,7 @@ else:
             df["관중수"].mean()
         )
 
-# 휴리스틱: 날씨 룰
-if rainfall > 0:
-
-    predicted_heuristic = int(
-        predicted_heuristic * 0.88
-    )
-
-if temperature >= 30:
+# 휴리스틱: 날씨 룰 (일 강수는 UI 미사용으로 비 룰 생략)
 
     predicted_heuristic = int(
         predicted_heuristic * 0.93
@@ -695,7 +756,7 @@ if ml_used:
 
     st.caption(
         "예측: **RandomForest 파이프라인** `models/attendance_rf_pipeline.joblib` "
-        "(입력: `kbo_train_ready` 유사 행 + 사이드바 **날짜·기온·강수·습도**)."
+        "(입력: `kbo_train_ready` 유사 행 + 사이드바 **날짜·기온·습도**; 일 강수는 0mm 고정)."
     )
 
 else:
@@ -841,6 +902,45 @@ st.markdown(f"""
 
 </div>
 """, unsafe_allow_html=True)
+
+st.caption(
+    "위 수치는 **경기가 개최된다는 전제**에서의 관람 수요 추정입니다. "
+    "우천 취소·노게임·콜드게임 시에는 적용되지 않습니다."
+)
+
+_rt, _rb, _rs = _hourly_rain_ref_band(hourly_rain_ref)
+st.markdown(
+    f'<div class="rain-risk-box rain-risk-{_rs}">'
+    f'<div class="rain-risk-title">☂ 우천·콜드게임 참고 (시간당 {hourly_rain_ref:g} mm/h)</div>'
+    f"<p style=\"margin:0 0 8px 0;\"><b>{_rt}</b> — {_rb}</p>"
+    "<p style=\"margin:0;font-size:12px;color:#9fb3c8;\">"
+    "아래는 운영·보도에서 인용되는 요약이며, 실제는 심판·리그 규정·구장 상황에 따릅니다."
+    "</p></div>",
+    unsafe_allow_html=True,
+)
+
+with st.expander("KBO 우천·콜드게임 기준 (요약·참고)", expanded=False):
+    st.markdown(
+        """
+**사전 취소(검토)**
+
+- 경기 시작 **3시간 전**: 시간당 **10mm 이상** **예보** 시 취소 등을 검토한다는 설명이 많습니다.
+
+**경기 당일**
+
+- 경기 시작 **1시간 전**: 시간당 **5mm 이상** **실제 강우** 시 검토한다는 설명이 많습니다.
+
+**경기 중 (강우 처리 요약)**
+
+- **5회 이전** 중단·무효 처리에 해당하는 경우(통상 **노게임**으로 이해하는 설명)와  
+- **5회 이후** **강우 콜드게임**(유효 경기로 인정되는 경우)  
+  등은 **심판·공식 규정**에 따릅니다. 위 문구는 안내용 요약입니다.
+
+---
+**이 화면과의 관계:** 슬라이더의 **시간당(mm/h)** 은 위 검토선과 **대조용**일 뿐이며, **관중 예측에는 사용하지 않습니다.**  
+예측 쪽 **일 합계 강수**는 UI에서 받지 않고 **0mm(무강수)** 로 고정합니다.
+        """
+    )
 
 # =========================
 # 정보 카드
@@ -1043,9 +1143,10 @@ st.markdown("""
 <div class="notice-box">
 
 ⓘ 사이드바 <b>RF 파이프라인</b>을 켠 경우: 저장된 회귀 파이프라인으로 추정합니다. 입력은
-<code>kbo_train_ready.csv</code>에서 고른 유사 행에 UI의 날짜·기상을 반영한 값입니다.
-RF를 끄면 <b>휴리스틱(과거 평균·비·폭염·고습도 룰)</b>만 사용합니다.
+<code>kbo_train_ready.csv</code>에서 고른 유사 행에 UI의 날짜·기온·습도를 반영하고, **일 합계 강수는 0mm로 고정**합니다.
+RF를 끄면 <b>휴리스틱(과거 평균·폭염·고습도 룰)</b>만 사용합니다.
 구장 정원은 <code>kbo_stadium_info.csv</code>를 우선 사용합니다.
+메인의 **시간당 강수**는 KBO 우천 문구와의 **참고 비교용**이며 예측 숫자에는 넣지 않습니다.
 
 </div>
 """, unsafe_allow_html=True)

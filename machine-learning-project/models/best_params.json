@@ -5,10 +5,10 @@
     "min_samples_leaf": 9,
     "max_features": 0.7235339914781745
   },
-  "cv_mae_mean": 2491.7802853595713,
-  "test_mae": 1943.4755255175512,
-  "test_r2": 0.7337439706705337,
-  "n_trials": 100,
+  "cv_mae_mean": 2491.7802853595717,
+  "test_mae": 1943.4755255175476,
+  "test_r2": 0.7337439706705339,
+  "n_trials": 50,
   "n_cv_splits": 5,
   "cv_method": "TimeSeriesSplit"
 }
