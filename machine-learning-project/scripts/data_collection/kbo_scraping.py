@@ -13,6 +13,12 @@ import time
 from pathlib import Path
 
 import pandas as pd
+
+_SCRIPTS = Path(__file__).resolve().parent.parent
+if str(_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS))
+
+from common.kbo_regular_start_time import apply_default_start_time_strings
 from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -233,6 +239,9 @@ def enrich_attendance_df(df: pd.DataFrame, year: int) -> pd.DataFrame:
         out["경기시간"] = out["시간"].astype(str).str.strip()
     else:
         out["경기시간"] = ""
+
+    # 2026~ : 표에 시간이 없거나 비시간 문자열이면 정규시즌 기본 개시 시각으로 보강
+    out["경기시간"] = apply_default_start_time_strings(out["날짜"], out["경기시간"], year)
 
     out["기상_매핑_지역키"] = out["구장"].map(stadium_to_region_key)
     out["평일_주말"] = out["요일"].map(weekday_to_bucket)
