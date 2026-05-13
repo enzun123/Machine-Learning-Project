@@ -1,188 +1,87 @@
-# ⚾ KBO 관중 예측 ML 프로젝트
+# KBO 2026 일정·기상 보강 및 UI (`feat/2026-schedule-and-weather`)
 
-> KBO 경기별 관중 수를 머신러닝으로 예측하는 엔드투엔드 파이프라인 + Streamlit 웹앱
+**브랜치:** `feat/2026-schedule-and-weather`
 
----
+**2026 정규시즌**을 전제로 한 **기본 개시 시각 보강**(스크랩 표에 시간이 비었을 때), **공휴일 반영**, **기상청 API허브 동네예보(typ02)** 연동 모듈 추가, **Streamlit**에서 시간당 강수·우천 요약·동네예보 참고 표시 및 **RF permutation importance**에서 날씨 피처 고정 등을 다룹니다. 이 브랜치에서는 **`kbo_scraping.py`** 보강 로직과 함께 **원시·interim·final 데이터·모델 리포트** 일부가 갱신되어 있습니다.
 
-## 📌 프로젝트 개요
+## 브랜치 개요
 
-경기 일정, 구장 정보, 기상 데이터, 팀 순위를 결합해 **RandomForest 기반 회귀 모델**로 KBO 경기의 관중 수를 예측합니다. 수집 → 전처리 → 피처 생성 → 학습 → 추론까지 전 과정을 자동화하며, **Streamlit UI**를 통해 손쉽게 인터랙티브하게 예측 결과를 확인할 수 있습니다.
+| 구분 | 내용 |
+|------|------|
+| **목적** | 경기일시 누락 시 KBO 관례에 맞춘 개시 시각 채움, 혹서기(7~8월) 규칙·공휴일 반영, 예보·우천 정보를 UI·수집 파이프라인에 반영 |
+| **신규·핵심 코드** | `scripts/common/kbo_regular_start_time.py`, `scripts/common/kma_vilage_fcst.py` |
+| **수정** | `scripts/data_collection/kbo_scraping.py`, `scripts/data_collection/kbo_size.py`, `scripts/app/streamlit_app.py` |
+| **데이터·모델** | `data/raw/*.csv`, `data/interim/*`, `data/processed/final_dataset.csv`, `data/external/kbo_stadium_info.csv`, `models/*.json` 등 (이 브랜치 커밋 기준 갱신분) |
 
----
+## 전체 파이프라인에서의 위치
 
-## 📁 저장소 구조
+1. `feat/scraping-kbo` — 일별 관중 수집  
+2. **`feat/2026-schedule-and-weather`** — **현재 브랜치** (스크랩 보강·동네예보 모듈·UI·관련 산출물)  
+3. `feat/weather-api` — 지상 일별 기상 병합  
+4. `feat/preprocessing` → `feat/feature-engineering` → `feat/ml-modeling` → `feat/streamlit-ui` …  
 
-```
-Machine-Learning-Project/
-├── README.md
-├── .gitignore
-└── machine-learning-project/
-    ├── data/
-    │   ├── raw/               # 연도별 일별 관중 원시 데이터
-    │   ├── interim/           # 관중 + 기상 병합 중간 데이터
-    │   ├── processed/         # final_dataset, kbo_train_ready (학습용 최종 테이블)
-    │   └── external/          # 구장 정원, 일별 순위, 기상 캐시 등
-    ├── models/                # 학습된 파이프라인(.joblib), 리포트, 튜닝 결과
-    ├── reports/eda/           # EDA 산출물 (figures, eda_summary.md)
-    └── scripts/
-        ├── app/
-        │   └── streamlit_app.py          # 웹 UI
-        ├── common/
-        │   └── stadium_aliases.py        # 구장 이름 별칭 공통 모듈
-        ├── data_collection/              # 크롤링 · 기상 · 최근 N경기 수집
-        ├── preprocessing/               # 전처리 병합
-        ├── features/
-        │   └── build_features.py        # 피처 생성
-        ├── modeling/                    # 학습 · 평가 · 예측 · 튜닝
-        └── eda/
-            └── run_eda.py               # EDA 리포트 생성
+상류·하류 단계의 **일반 실행 순서**는 `develop` 루트 README 또는 팀 통합 문서를 참고하면 됩니다.
+
+## 주요 구조 (이 브랜치 기준 추가·연동)
+
+```text
+machine-learning-project/scripts/
+├── common/
+│   ├── kbo_regular_start_time.py   # ★ 정규시즌 기본 개시 시각 + 2026 공휴일·혹서기 규칙
+│   └── kma_vilage_fcst.py          # ★ 동네예보 RN1·POP 등 (API허브 typ02)
+├── data_collection/
+│   └── kbo_scraping.py             # 개시 시각 보강 등 스크랩 후처리 연동
+└── app/
+    └── streamlit_app.py            # ★ 동네예보·우천 참고, 일강수 고정 예측 흐름, RF importance 등
 ```
 
----
+## 주요 기능
 
-## 🔄 데이터 파이프라인
+| 항목 | 설명 |
+|------|------|
+| `kbo_regular_start_time` | 평일 18:30, 토·일·공휴일 및 **7~8월 혹서기** 규칙(2026 시즌 연도부터 적용 등). `KR_PUBLIC_HOLIDAYS_2026` 유지보수 필요 |
+| `kma_vilage_fcst` | 구장별 격자 `STADIUM_GRID`, 초단기·단기예보 조회. 인증: **`KMA_APIHUB_AUTH_KEY`** (동네예보 이용 신청) |
+| 스크랩 | GraphDaily 수집 후 **시:분 공란** 시 위 모듈로 보강 |
+| Streamlit | 시간당 강수·KBO 우천 요약 참고, 예측 시 **일 합계 강수 0mm 고정** 등 정책, 동네예보·휴리스틱 강수 UI, **RF permutation importance**에서 날씨 피처 고정 |
+| 정원 CSV | `kbo_size.py` / `kbo_stadium_info.csv` 소폭 조정(이 브랜치 데이터 반영) |
 
-```
-[kbo_scraping.py]         →  data/raw/kbo_{연도}_attendance.csv
-[kbo_standings_scrape.py] →  data/external/kbo_standings_daily.csv
-[kbo_size.py]             →  data/external/kbo_stadium_info.csv
-        ↓
-[weather_api.py]          →  data/interim/kbo_*_attendance_weather.csv
-        ↓
-[preprocess_attendance_weather.py] → data/processed/final_dataset.csv
-        ↓
-[build_features.py]       →  data/processed/kbo_train_ready.csv
-        ↓
-[train_model.py]          →  models/attendance_rf_pipeline.joblib
-        ↓
-[evaluate_model.py]       →  models/eval_report.json
-        ↓
-[streamlit_app.py]        →  🌐 웹 UI에서 실시간 예측
-```
-
----
-
-## 🚀 실행 방법
-
-### 사전 준비
+## 환경 변수
 
 ```bash
-pip install pandas numpy requests beautifulsoup4 selenium webdriver-manager \
-            scikit-learn joblib matplotlib seaborn streamlit optuna lightgbm
+export KMA_APIHUB_AUTH_KEY="발급받은_API허브_키"
 ```
 
-### 권장 실행 순서
+- 동네예보(typ02)는 **별도 이용 신청**이 필요할 수 있습니다.  
+- 키가 없으면 `kma_vilage_fcst` 일부는 `weather_api`의 기존 키 import를 시도할 수 있으나, **운영·공개 저장소에서는 환경 변수만 사용**하는 것을 권장합니다.
+
+## 실행 방법 (이 브랜치 기능 확인용)
 
 ```bash
 cd machine-learning-project
 
-# 1) 원시 데이터 수집 (Selenium + Chrome 필요)
+# 스크랩 (Chrome). 개시 시각 보강은 수집 파이프라인 안에서 적용
 python3 scripts/data_collection/kbo_scraping.py
-python3 scripts/data_collection/kbo_standings_scrape.py
 
-# 2) 구장 수용 인원 CSV 생성
-python3 scripts/data_collection/kbo_size.py
-
-# 3) 기상 데이터 병합 → interim
-python3 scripts/data_collection/weather_api.py
-
-# 4) interim → final_dataset
-python3 scripts/preprocessing/preprocess_attendance_weather.py
-
-# 5) 피처 생성 → kbo_train_ready
-python3 scripts/features/build_features.py
-
-# 6) (선택) EDA 리포트 생성
-python3 scripts/eda/run_eda.py
-
-# 7) 모델 학습
-python3 scripts/modeling/train_model.py
-
-# 8) (선택) 평가 / 하이퍼파라미터 튜닝
-python3 scripts/modeling/evaluate_model.py
-python3 scripts/modeling/tune_hyperparams.py --n-trials 50
-```
-
-> 💡 원시 CSV가 이미 있는 경우 1)~3) 단계를 건너뛰고 `interim` 또는 `processed` 단계부터 시작할 수 있습니다.
-
-### Streamlit 웹앱 실행
-
-```bash
-cd machine-learning-project
+# UI (동네예보·우천 UI 확인 시 위 KMA 키 설정)
 streamlit run scripts/app/streamlit_app.py
 ```
 
-> 웹앱 실행 전에 반드시 `train_model.py`로 모델을 먼저 학습해 두세요.  
-> 앱은 `kbo_2025_attendance_weather.csv` 파일을 `scripts/app/` 또는 `data/` 경로에서 자동 탐색합니다.
+동네예보만 모듈로 시험할 때는 `PYTHONPATH=machine-learning-project/scripts` 후 `from common.kma_vilage_fcst import ...` 형태로 import 할 수 있습니다.
 
----
+## 주의 사항
 
-## 🖥️ Streamlit UI 기능
+- **공휴일·시즌 규칙**은 행정 고시·KBO 안내 변경 시 `kbo_regular_start_time.py`를 수정해야 합니다.  
+- **예보 API**는 호출 제한·응답 스펙 변경에 취약합니다.  
+- 이 브랜치에 **대용량 CSV·json 갱신**이 포함되어 있으므로 PR 시 diff 크기·민감 정보 여부를 팀 규칙에 맞게 검토하세요.
 
-| 기능 | 설명 |
-|------|------|
-| 사이드바 입력 | 경기 날짜, 홈·원정팀, 구장 선택 |
-| 기상 슬라이더 | 기온, 강수량 등 기상 조건 조정 |
-| KBO 자동 반영 | 최근 경기 관중 데이터 자동 업데이트 옵션 |
-| 모델 선택 | RandomForest 파이프라인 사용 여부 토글 |
-| 예측 시각화 | 예측 결과 및 관련 통계 차트 제공 |
+## 관련 커밋 (요약)
 
----
+- `feat(kbo): 2026 정규시즌 기본 개시 시각 보강 및 공휴일 반영`  
+- `docs(kbo): 기본 개시 시각 모듈 docstring에 혹서기 적용 연도 명시`  
+- `feat: 시간당 강수 참고·KBO 우천 요약, 예측은 일강수 0mm 고정`  
+- `feat: 동네예보·우천 참고 UI, RF 중요도 날씨 고정, 휴리스틱 강수 수정`  
 
-## 📊 주요 스크립트
+## 문의
 
-| 스크립트 | 역할 |
-|----------|------|
-| `data_collection/kbo_scraping.py` | 일별 관중·경기 메타 크롤링 |
-| `data_collection/kbo_standings_scrape.py` | 일자별 팀 순위·승률 스냅샷 수집 |
-| `data_collection/kbo_size.py` | 구단·구장별 최대 수용 인원 CSV 생성 |
-| `data_collection/weather_api.py` | 기상청 API 연동 → interim CSV 생성 |
-| `data_collection/fetch_recent_crowd.py` | 구장별 최근 N경기 관중 추출 |
-| `preprocessing/preprocess_attendance_weather.py` | interim 병합 → `final_dataset.csv` |
-| `features/build_features.py` | 학습용 피처 생성 → `kbo_train_ready.csv` |
-| `modeling/train_model.py` | 시간 순 홀드아웃 검증 + RF 파이프라인 학습 |
-| `modeling/evaluate_model.py` | 테스트 구간 재평가 및 리포트 저장 |
-| `modeling/predict.py` | 저장된 모델로 배치 예측 |
-| `modeling/tune_hyperparams.py` | Optuna + TimeSeriesSplit 하이퍼파라미터 튜닝 |
-| `eda/run_eda.py` | 탐색적 데이터 분석 리포트 생성 |
-| `app/streamlit_app.py` | 관람 수요 예측 웹앱 |
-| `common/stadium_aliases.py` | 구장 이름 별칭 공통 정의 |
-
----
-
-## ⚙️ 모델 정보
-
-- **알고리즘**: RandomForest Regressor (scikit-learn Pipeline)
-- **검증 방식**: 시간 순 홀드아웃 (Time-based holdout)
-- **튜닝**: Optuna + TimeSeriesSplit (선택 사항)
-- **저장 포맷**: `models/attendance_rf_pipeline.joblib`
-- **선택 모델**: LightGBM (`train_model.py` 내 선택적 사용)
-
----
-
-## 🔑 기상 API 설정
-
-기상청 API 인증키는 현재 **`scripts/data_collection/weather_api.py` 상단 변수**로만 설정되어 있습니다.  
-저장소에 키를 커밋하지 않으려면 로컬에서만 수정하거나, 추후 `os.environ` 등으로 분리하는 편이 안전합니다.
-
----
-
-## 🌿 Git 브랜치 전략
-
-| 브랜치 | 용도 |
-|--------|------|
-| `main` | 배포용 안정 버전 |
-| `develop` | 기능 통합 브랜치 |
-| `feat/*` / `feature/*` | 기능별 개발 브랜치 |
-
----
-
-## 📝 라이선스
-
-저장소 정책에 맞게 `LICENSE` 파일을 추가하세요.
-
----
-
-## 🙋 문의
-팀장:허은준
-연락처:enzun123@gmail.com
+- **팀장:** 허은준  
+- **연락:** enzun123@gmail.com  
