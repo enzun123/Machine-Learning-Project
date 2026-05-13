@@ -8,6 +8,9 @@ KBO 정규시즌 **기본** 개시 시각 (스크랩 표에 시간이 비었을 
 - 법정·임시 공휴일(평일): 14:00 — 7~8월에는 18:00 (**2026 시즌 연도부터** 혹서기 규칙 적용)
 - 토요일이 공휴일이면(비혹서기) 토요일 규칙 17:00 유지
 
+``apply_default_start_time_strings`` 기본값(``from_year=None``)은 **모든 시즌**에서 시:분이 비면 위 규칙으로 채운다.
+과거처럼 특정 연도 미만은 원본 유지하려면 ``from_year``에 연도를 넘긴다.
+
 공휴일 목록은 연도별로 `KR_PUBLIC_HOLIDAYS_20XX`에 반영합니다. 정부 고시 변경 시 수정하세요.
 """
 
@@ -118,13 +121,15 @@ def apply_default_start_time_strings(
     time_col: pd.Series,
     season_year: int,
     *,
-    from_year: int = 2026,
+    from_year: int | None = None,
 ) -> pd.Series:
     """
     `경기시간`이 비었거나 시:분 형태가 아니면 기본 시각 문자열로 채움.
-    `season_year < from_year` 이면 원본 유지.
+
+    ``from_year``가 정수이면 ``season_year < from_year`` 인 시즌은 원본 시간 열을 그대로 둔다.
+    ``None``(기본)이면 모든 시즌에서 비어 있거나 비시간 문자열이면 보강한다.
     """
-    if season_year < from_year:
+    if from_year is not None and season_year < from_year:
         return time_col.astype(str)
 
     out: list[str] = []

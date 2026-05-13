@@ -132,6 +132,25 @@ def split_away_home(game_cell: str) -> tuple[str, str]:
     return "", ""
 
 
+def split_away_home_graph_daily(game_cell: str) -> tuple[str, str]:
+    """
+    GraphDaily `경기` 칸: `SSG 8 vs 7 한화`처럼 스코어가 끼인 경우와 `KIA vs LG` 형태.
+    **원정(좌) vs 홈(우)** 로 보고 (방문팀, 홈팀) 순서로 반환한다.
+    """
+    raw = str(game_cell).strip()
+    if not raw:
+        return "", ""
+    m = re.match(r"^(.+?)\s+(\d+)\s+vs\s+(\d+)\s+(.+)$", raw, re.I | re.DOTALL)
+    if m:
+        return m.group(1).strip(), m.group(4).strip()
+    return split_away_home(raw)
+
+
+def _요일_in_parentheses(date_cell: object) -> str:
+    m = re.search(r"\(([월화수목금토일])\)", str(date_cell))
+    return m.group(1) if m else ""
+
+
 def _read_table_headers(table) -> list[str]:
     """thead th 또는 첫 헤더 행에서 열 이름 수집."""
     thead = table.find("thead")
@@ -226,24 +245,46 @@ def enrich_attendance_df(df: pd.DataFrame, year: int) -> pd.DataFrame:
         out["방문팀"] = away
         out["홈팀"] = home
     else:
-        game_key = next((k for k in out.columns if "경기" in k and "vs" in k.lower()), None)
+        game_key = None
+        for candidate in ("경기(원정vs홈)", "경기"):
+            if candidate in out.columns:
+                game_key = candidate
+                break
+        if game_key is None:
+            game_key = next(
+                (k for k in out.columns if "경기" in str(k) and str(k) != "경기날짜"),
+                None,
+            )
         if game_key:
-            away, home = zip(*out[game_key].map(split_away_home))
+            away, home = zip(*out[game_key].map(split_away_home_graph_daily))
             out["방문팀"] = away
             out["홈팀"] = home
         else:
             out["홈팀"] = ""
             out["방문팀"] = ""
 
-    if "시간" in out.columns:
-        out["경기시간"] = out["시간"].astype(str).str.strip()
-    else:
+    time_col = None
+    for name in ("시간", "개시", "개시시각"):
+        if name in out.columns:
+            time_col = out[name].astype(str).str.strip()
+            break
+    if time_col is None:
         out["경기시간"] = ""
+    else:
+        out["경기시간"] = time_col
 
-    # 2026~ : 표에 시간이 없거나 비시간 문자열이면 정규시즌 기본 개시 시각으로 보강
+    # 표에 시간이 없거나 비시간 문자열이면 정규시즌 기본 개시 시각으로 보강(전 시즌)
     out["경기시간"] = apply_default_start_time_strings(out["날짜"], out["경기시간"], year)
 
     out["기상_매핑_지역키"] = out["구장"].map(stadium_to_region_key)
+
+    if "요일" not in out.columns:
+        out["요일"] = out["날짜"].map(_요일_in_parentheses)
+    else:
+        yo = out["요일"].astype(str).str.strip()
+        from_date = out["날짜"].map(_요일_in_parentheses)
+        out["요일"] = yo.mask(yo.eq("") | yo.eq("nan"), from_date).fillna("")
+
     out["평일_주말"] = out["요일"].map(weekday_to_bucket)
 
     out["경기일시"] = [
@@ -256,7 +297,9 @@ def enrich_attendance_df(df: pd.DataFrame, year: int) -> pd.DataFrame:
     out["경기날짜"] = ts.dt.strftime("%Y-%m-%d")
     out["월"] = ts.dt.month
     out["주차_ISO"] = ts.dt.isocalendar().week.astype("Int64")
-    out = out.loc[ts.notna()].copy()
+    ok = ts.notna()
+    out = out.loc[ok].copy()
+    out["경기일시"] = ts.loc[ok].dt.strftime("%Y-%m-%d %H:%M")
 
     out["관중수"] = parse_crowd_to_int(out["관중수"])
     out = out.dropna(subset=["관중수"])
