@@ -1,0 +1,7 @@
+app
+common
+data_collection
+eda
+features
+modeling
+preprocessing

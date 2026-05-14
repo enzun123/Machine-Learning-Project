@@ -20,13 +20,34 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-_scripts_dir = Path(__file__).resolve().parents[1]
-if str(_scripts_dir) not in sys.path:
-    sys.path.insert(0, str(_scripts_dir))
+from common.config import (
+    ATTENDANCE_CAP_CLIP_MULTIPLIER,
+    DEFAULT_RH_MEDIAN_FALLBACK,
+    DEFAULT_TEMP_MEDIAN_FALLBACK,
+    DEFAULT_WIN_RATE,
+    DEFAULT_WIND_MEDIAN_FALLBACK,
+    FORM_LAST_N_GAMES,
+    FULL_SEASON_GAMES,
+    HOT_TEMP_THRESHOLD_C,
+    HUMIDITY_BUCKET_EDGES,
+    HUMIDITY_BUCKET_LABELS,
+    PENNANT_RACE_GB_ABS_MAX,
+    PENNANT_RACE_START_MONTH,
+    PLAYOFF_URGENCY_BASE,
+    PLAYOFF_URGENCY_CLIP_HIGH,
+    PLAYOFF_URGENCY_CLIP_LOW,
+    RAIN_BINS,
+    RAIN_LABELS,
+    SMALL_STADIUM_CAPACITY,
+    STANDINGS_DEFAULT_RANK_FOR_GB,
+    STANDINGS_FIFTH_PLACE_ROW_INDEX,
+    TEMP_BUCKET_EDGES,
+    TEMP_BUCKET_LABELS,
+    WIND_BUCKET_EDGES,
+    WIND_BUCKET_LABELS,
+)
+from common.logging_config import setup_logging
 from common.stadium_aliases import STADIUM_ALIAS
-
-RAIN_BINS = [-1.0, 0.0, 1.0, 5.0, float("inf")]
-RAIN_LABELS = ["No_Rain", "Rain_0_1mm", "Rain_1_5mm", "Rain_5mm_plus"]
 
 REQUIRED_COLS = [
     "연도",
@@ -94,12 +115,6 @@ MODEL_READY_COLUMNS = [
     "관중수",
 ]
 
-# KBO 정규시즌 총 경기 수 (season_progress 분모)
-FULL_SEASON_GAMES = 144
-
-# 소규모 구장 기준 (is_small_stadium)
-SMALL_STADIUM_CAPACITY = 15_000
-
 
 def _pct_rank(score: float, values: list[float]) -> float:
     arr = np.array([x for x in values if not (pd.isna(x) or np.isnan(x))], dtype=float)
@@ -145,8 +160,8 @@ def add_season_form_and_draw_proxy(df: pd.DataFrame) -> pd.DataFrame:
     hc: dict[tuple[int, str], int] = defaultdict(int)
     vs: dict[tuple[int, str], float] = defaultdict(float)
     vc: dict[tuple[int, str], int] = defaultdict(int)
-    home_hist: dict[tuple[int, str], deque[float]] = defaultdict(lambda: deque(maxlen=5))
-    away_hist: dict[tuple[int, str], deque[float]] = defaultdict(lambda: deque(maxlen=5))
+    home_hist: dict[tuple[int, str], deque[float]] = defaultdict(lambda: deque(maxlen=FORM_LAST_N_GAMES))
+    away_hist: dict[tuple[int, str], deque[float]] = defaultdict(lambda: deque(maxlen=FORM_LAST_N_GAMES))
     mu_s: dict[tuple[str, str], float] = defaultdict(float)   # [수정6] matchup 누적합
     mu_c: dict[tuple[str, str], int] = defaultdict(int)        # [수정6] matchup 누적수
     team_games: dict[tuple[int, str], int] = defaultdict(int)  # [수정4] 소화 경기수
@@ -246,11 +261,10 @@ def join_standings_features(
     """
     out = df.copy()
     p = Path(standings_path) if standings_path else None
-    default_wr = 0.5
 
     if p is None or not p.exists():
         for col, val in {
-            "home_win_rate": default_wr, "visitor_win_rate": default_wr,
+            "home_win_rate": DEFAULT_WIN_RATE, "visitor_win_rate": DEFAULT_WIN_RATE,
             "win_rate_diff": 0.0,
             "home_gb_to_5th": 0.0, "visitor_gb_to_5th": 0.0,
             "is_pennant_race": 0,
@@ -262,16 +276,16 @@ def join_standings_features(
     if "시리즈" in st.columns:
         st = st[st["시리즈"].astype(str).str.contains("정규", na=False)]
     st["기준일"] = pd.to_datetime(st["기준일"], errors="coerce").dt.normalize()
-    st["승률"]  = pd.to_numeric(st["승률"],  errors="coerce").fillna(default_wr)
+    st["승률"]  = pd.to_numeric(st["승률"],  errors="coerce").fillna(DEFAULT_WIN_RATE)
     st["게임차"] = pd.to_numeric(st["게임차"], errors="coerce").fillna(0.0)
-    st["순위"]   = pd.to_numeric(st["순위"],   errors="coerce").fillna(5)
+    st["순위"]   = pd.to_numeric(st["순위"],   errors="coerce").fillna(STANDINGS_DEFAULT_RANK_FOR_GB)
 
     # 날짜별 5위 팀의 게임차 (타이 있으면 5번째 행)
     rank5_gb = (
         st.sort_values(["기준일", "순위"])
         .groupby("기준일", observed=True)
         .apply(
-            lambda g: float(g.iloc[min(4, len(g) - 1)]["게임차"]),
+            lambda g: float(g.iloc[min(STANDINGS_FIFTH_PLACE_ROW_INDEX, len(g) - 1)]["게임차"]),
             include_groups=False,
         )
         .reset_index(name="gb_5th")
@@ -298,7 +312,7 @@ def join_standings_features(
     ).drop(columns=["기준일", "팀명", "_gdt"], errors="ignore")
 
     for col, default in [
-        ("home_win_rate", default_wr), ("visitor_win_rate", default_wr),
+        ("home_win_rate", DEFAULT_WIN_RATE), ("visitor_win_rate", DEFAULT_WIN_RATE),
         ("home_gb_to_5th", 0.0),       ("visitor_gb_to_5th", 0.0),
     ]:
         med_y = work.groupby("연도", observed=True)[col].transform("median")
@@ -309,7 +323,7 @@ def join_standings_features(
 
     month_num = pd.to_numeric(work["월"], errors="coerce").fillna(0)
     work["is_pennant_race"] = (
-        (month_num >= 8) & (work["home_gb_to_5th"].abs() <= 3.0)
+        (month_num >= PENNANT_RACE_START_MONTH) & (work["home_gb_to_5th"].abs() <= PENNANT_RACE_GB_ABS_MAX)
     ).astype(int)
 
     return work
@@ -371,8 +385,8 @@ def create_features_pro(df_main, df_stadium, standings_path=None):
         cap_mean = 0.0
     df["stadium_capacity"] = df["stadium_capacity"].fillna(cap_mean)
 
-    # [수정8] 관중수 소프트 클리핑 (구장 정원 105% 초과는 데이터 오류로 간주)
-    cap_clip = df["stadium_capacity"].clip(lower=1.0) * 1.05
+    # [수정8] 관중수 소프트 클리핑 (구장 정원 대비 상한 초과는 데이터 오류로 간주)
+    cap_clip = df["stadium_capacity"].clip(lower=1.0) * ATTENDANCE_CAP_CLIP_MULTIPLIER
     df["관중수"] = df["관중수"].clip(upper=cap_clip)
 
     df["일합계강수량(mm)"] = df["일합계강수량(mm)"].fillna(0)
@@ -380,37 +394,37 @@ def create_features_pro(df_main, df_stadium, standings_path=None):
 
     df["rain_bucket"] = pd.cut(
         df["일합계강수량(mm)"],
-        bins=RAIN_BINS,
-        labels=RAIN_LABELS,
+        bins=list(RAIN_BINS),
+        labels=list(RAIN_LABELS),
         include_lowest=True,
     )
 
     ta = df["일평균기온(°C)"]
-    ta_med = float(ta.median()) if pd.notna(ta.median()) else 15.0
+    ta_med = float(ta.median()) if pd.notna(ta.median()) else DEFAULT_TEMP_MEDIAN_FALLBACK
     df["일평균기온(°C)"] = ta.fillna(ta_med)
     rh = df["일평균상대습도(%)"]
-    rh_med = float(rh.median()) if pd.notna(rh.median()) else 60.0
+    rh_med = float(rh.median()) if pd.notna(rh.median()) else DEFAULT_RH_MEDIAN_FALLBACK
     df["일평균상대습도(%)"] = rh.fillna(rh_med).clip(0, 100)
     ws = df["일평균풍속(m/s)"]
-    ws_med = float(ws.median()) if pd.notna(ws.median()) else 2.0
+    ws_med = float(ws.median()) if pd.notna(ws.median()) else DEFAULT_WIND_MEDIAN_FALLBACK
     df["일평균풍속(m/s)"] = ws.fillna(ws_med).clip(lower=0)
 
-    df["is_hot"] = (df["일평균기온(°C)"] >= 30).astype(int)
+    df["is_hot"] = (df["일평균기온(°C)"] >= HOT_TEMP_THRESHOLD_C).astype(int)
     df["temp_bucket"] = pd.cut(
         df["일평균기온(°C)"],
-        bins=[-float("inf"), 10, 20, 25, 30, float("inf")],
-        labels=["VeryCold", "Cold", "Mild", "Warm", "Hot"],
+        bins=list(TEMP_BUCKET_EDGES),
+        labels=list(TEMP_BUCKET_LABELS),
     )
 
     df["humidity_bucket"] = pd.cut(
         df["일평균상대습도(%)"],
-        bins=[0, 40, 60, 80, 100],
-        labels=["Dry", "Normal", "Humid", "VeryHumid"],
+        bins=list(HUMIDITY_BUCKET_EDGES),
+        labels=list(HUMIDITY_BUCKET_LABELS),
     )
     df["wind_bucket"] = pd.cut(
         df["일평균풍속(m/s)"],
-        bins=[-1, 1.5, 3.3, 5.4, float("inf")],
-        labels=["Calm", "Light", "Moderate", "Strong"],
+        bins=list(WIND_BUCKET_EDGES),
+        labels=list(WIND_BUCKET_LABELS),
     )
 
     df["is_weekend"] = df["요일"].isin(["토", "일"]).astype(int)
@@ -450,7 +464,9 @@ def create_features_pro(df_main, df_stadium, standings_path=None):
     df = join_standings_features(df, standings_path)
 
     # 트랙1: 월 × 포스트시즌 긴박도 교호작용
-    df["playoff_urgency"] = (3.0 - df["home_gb_to_5th"].clip(-10, 3)).clip(lower=0.0)
+    df["playoff_urgency"] = (
+        PLAYOFF_URGENCY_BASE - df["home_gb_to_5th"].clip(PLAYOFF_URGENCY_CLIP_LOW, PLAYOFF_URGENCY_CLIP_HIGH)
+    ).clip(lower=0.0)
     df["month_x_playoff_urgency"] = (
         pd.to_numeric(df["월"], errors="coerce").fillna(0) * df["playoff_urgency"]
     )
@@ -460,6 +476,7 @@ def create_features_pro(df_main, df_stadium, standings_path=None):
 
 
 if __name__ == "__main__":
+    setup_logging()
     base_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.abspath(os.path.join(base_dir, "../../"))
 

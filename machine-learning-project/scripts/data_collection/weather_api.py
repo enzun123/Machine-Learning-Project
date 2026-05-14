@@ -7,9 +7,7 @@ import re
 from datetime import datetime, timedelta
 from pathlib import Path
 
-# 로깅 설정
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-log = logging.getLogger(__name__)
+from common.logging_config import setup_logging
 
 # ══════════════════════════════════════════════════════════════
 #  ① 경로 및 API 환경 설정 (pathlib 적용)
@@ -26,6 +24,8 @@ KBO_FILES = [
     RAW_DIR / "kbo_2025_attendance.csv"
 ]
 CACHE_FILE = EXTERNAL_DIR / "weather_cache.json"
+
+log = logging.getLogger(__name__)
 
 AUTH_KEY = "NtKXD3bRQkCSlw920cJAyA"
 
@@ -160,6 +160,7 @@ def fetch_weather(category, date_str, stn_id):
 #  ③ 메인 실행 로직
 # ══════════════════════════════════════════════════════════════
 def main():
+    setup_logging()
     log.info(f"프로젝트 루트 확인: {PROJECT_ROOT}")
     INTERIM_DIR.mkdir(parents=True, exist_ok=True)
     EXTERNAL_DIR.mkdir(parents=True, exist_ok=True)

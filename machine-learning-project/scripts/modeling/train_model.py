@@ -15,6 +15,8 @@ import json
 import sys
 from pathlib import Path
 
+from common.logging_config import setup_logging
+
 import joblib
 import numpy as np
 import pandas as pd
@@ -207,6 +209,7 @@ def _split_time_bounds(df: pd.DataFrame, idx: np.ndarray) -> dict:
 
 
 def main() -> None:
+    setup_logging()
     root = _project_root()
     data_path = root / "data" / "processed" / "kbo_train_ready.csv"
     out_dir = root / "models"

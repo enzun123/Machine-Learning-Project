@@ -9,15 +9,13 @@ import argparse
 import sys
 from pathlib import Path
 
+from common.logging_config import setup_logging
+
 import joblib
 import numpy as np
 import pandas as pd
 
-_SCRIPT_DIR = Path(__file__).resolve().parent
-if str(_SCRIPT_DIR) not in sys.path:
-    sys.path.insert(0, str(_SCRIPT_DIR))
-
-from train_model import FEATURE_COLUMNS, TARGET, load_training_table
+from modeling.train_model import FEATURE_COLUMNS, TARGET, load_training_table
 
 
 def _project_root() -> Path:
@@ -44,6 +42,7 @@ def predict_df(pipe, X: pd.DataFrame) -> np.ndarray:
 
 
 def main() -> None:
+    setup_logging()
     parser = argparse.ArgumentParser(description="관중수 회귀 예측")
     parser.add_argument("--model", type=str, default=None, help=".joblib 경로")
     args = parser.parse_args()

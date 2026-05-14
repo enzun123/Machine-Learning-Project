@@ -14,10 +14,7 @@ from pathlib import Path
 
 import pandas as pd
 
-_SCRIPTS = Path(__file__).resolve().parent.parent
-if str(_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS))
-
+from common.logging_config import setup_logging
 from common.kbo_regular_start_time import apply_default_start_time_strings
 from bs4 import BeautifulSoup
 from selenium import webdriver
@@ -499,6 +496,7 @@ def _parse_args() -> argparse.Namespace:
 
 
 if __name__ == "__main__":
+    setup_logging()
     args = _parse_args()
     target_years = sorted(set(args.years))
     headless = not args.headed and os.environ.get("KBO_SCRAPE_HEADLESS", "1") != "0"

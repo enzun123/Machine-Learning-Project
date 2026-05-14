@@ -28,11 +28,8 @@ from sklearn.model_selection import TimeSeriesSplit, cross_val_score
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
 
-_SCRIPT_DIR = Path(__file__).resolve().parent
-if str(_SCRIPT_DIR) not in sys.path:
-    sys.path.insert(0, str(_SCRIPT_DIR))
-
-from train_model import (
+from common.logging_config import setup_logging
+from modeling.train_model import (
     CATEGORICAL_FEATURES,
     NUMERIC_FEATURES,
     RANDOM_STATE,
@@ -101,6 +98,7 @@ def make_objective(X_train: pd.DataFrame, y_train: pd.Series):
 
 
 def main() -> None:
+    setup_logging()
     parser = argparse.ArgumentParser()
     parser.add_argument("--n-trials", type=int, default=100, help="Optuna 탐색 횟수")
     args = parser.parse_args()

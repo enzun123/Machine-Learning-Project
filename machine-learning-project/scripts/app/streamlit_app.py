@@ -5,7 +5,6 @@ import html
 import logging
 import re
 import os
-import sys
 
 import joblib
 import matplotlib.font_manager as fm
@@ -15,7 +14,10 @@ import pandas as pd
 import streamlit as st
 from pathlib import Path
 
+from common.logging_config import setup_logging
+
 logger = logging.getLogger(__name__)
+setup_logging()
 
 _RE_KMA_QSECRET = re.compile(r"((?:authKey|serviceKey)=)([^&\s#'\"]+)", re.I)
 
@@ -158,12 +160,7 @@ def _default_home_team_for_stadium(stadium_name: str, attendance_df: pd.DataFram
 
 df = load_data()
 
-_SCRIPTS = Path(__file__).resolve().parent.parent
-PROJECT_ROOT = _SCRIPTS.parent
-if str(_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS))
-
-
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 def _fallback_stadium_capacity() -> dict[str, int]:
     """CSV를 못 읽을 때만 사용 (kbo_stadium_info.csv와 동기 유지 권장)."""
     return {

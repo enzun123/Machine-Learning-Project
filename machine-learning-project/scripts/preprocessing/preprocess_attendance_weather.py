@@ -29,11 +29,10 @@ from pathlib import Path
 
 import pandas as pd
 
-ROOT_DIR = Path(__file__).resolve().parents[2]
-_scripts_dir = Path(__file__).resolve().parents[1]
-if str(_scripts_dir) not in sys.path:
-    sys.path.insert(0, str(_scripts_dir))
+from common.logging_config import setup_logging
 from common.stadium_aliases import STADIUM_ALIAS
+
+ROOT_DIR = Path(__file__).resolve().parents[2]
 
 # build_features 시계열 정렬과 맞춤. 더블헤더 순서는 `_ts_for_sort`(경기일시 파싱)로만 구분.
 SORT_FOR_GAME_NO = ["연도", "경기날짜", "홈팀", "방문팀", "구장", "_ts_for_sort"]
@@ -89,6 +88,7 @@ def _ensure_경기날짜_and_ts(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def main() -> None:
+    setup_logging()
     args = _parse_args()
     input_paths = list(args.inputs) if args.inputs is not None else list(DEFAULT_INPUTS)
     output_path = Path(args.output)

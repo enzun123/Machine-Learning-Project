@@ -10,19 +10,16 @@ feat/eda: `final_dataset.csv` 기준 탐색 전용.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
 
+from common.logging_config import setup_logging
+from common.stadium_aliases import STADIUM_ALIAS
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
-_scripts_dir = Path(__file__).resolve().parents[1]
-if str(_scripts_dir) not in sys.path:
-    sys.path.insert(0, str(_scripts_dir))
-from common.stadium_aliases import STADIUM_ALIAS
 
 DATA_PATH = ROOT_DIR / "data" / "processed" / "final_dataset.csv"
 STADIUM_INFO_PATH = ROOT_DIR / "data" / "external" / "kbo_stadium_info.csv"
@@ -228,6 +225,7 @@ def write_summary(
 
 
 def main() -> None:
+    setup_logging()
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     FIG_DIR.mkdir(parents=True, exist_ok=True)
 

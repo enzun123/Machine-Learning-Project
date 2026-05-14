@@ -10,17 +10,15 @@ import json
 import sys
 from pathlib import Path
 
+from common.logging_config import setup_logging
+
 import joblib
 import numpy as np
 import pandas as pd
 from sklearn.inspection import permutation_importance
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
-_SCRIPT_DIR = Path(__file__).resolve().parent
-if str(_SCRIPT_DIR) not in sys.path:
-    sys.path.insert(0, str(_SCRIPT_DIR))
-
-from train_model import FEATURE_COLUMNS, TARGET, load_training_table
+from modeling.train_model import FEATURE_COLUMNS, TARGET, load_training_table
 
 RANDOM_STATE = 42
 
@@ -30,6 +28,7 @@ def _project_root() -> Path:
 
 
 def main() -> None:
+    setup_logging()
     root = _project_root()
     data_path = root / "data" / "processed" / "kbo_train_ready.csv"
     model_path = root / "models" / "attendance_rf_pipeline.joblib"

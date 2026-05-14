@@ -21,10 +21,7 @@ from pathlib import Path
 
 import pandas as pd
 
-_SCRIPTS = Path(__file__).resolve().parent.parent
-if str(_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS))
-
+from common.logging_config import setup_logging
 from common.stadium_aliases import STADIUM_ALIAS  # noqa: E402
 from data_collection.kbo_scraping import (  # noqa: E402
     enrich_attendance_df,
@@ -111,6 +108,7 @@ def fetch_recent_games(
 
 
 def main() -> None:
+    setup_logging()
     p = argparse.ArgumentParser(
         prog="fetch_recent_crowd.py",
         description="GraphDaily → 구장별 최근 관중 N경기",
