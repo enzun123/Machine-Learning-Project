@@ -15,6 +15,8 @@ log = logging.getLogger(__name__)
 
 # ══════════════════════════════════════════════════════════════
 #  ① 경로 및 API 환경 설정 (pathlib 적용)
+#  - 관측(typ01) 인증: 환경변수 ``KMA_APIHUB_AUTH_KEY`` (동네예보 typ02와 동일 이름 권장).
+#  - 요청 간격: ``WEATHER_API_REQUEST_SLEEP_SEC`` (초, 기본 0.3).
 # ══════════════════════════════════════════════════════════════
 # 현재 파이썬 파일 위치를 기준으로 프로젝트 경로를 계산합니다.
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -30,6 +32,7 @@ KBO_FILES = [
 CACHE_FILE = EXTERNAL_DIR / "weather_cache.json"
 
 KMA_APIHUB_AUTH_KEY_ENV = "KMA_APIHUB_AUTH_KEY"
+WEATHER_API_REQUEST_SLEEP_SEC = float(os.environ.get("WEATHER_API_REQUEST_SLEEP_SEC", "0.3"))
 
 
 def _auth_key() -> str:
@@ -241,7 +244,7 @@ def main():
             for cat in missing_cats:
                 res = fetch_weather(cat, dt, stn)
                 if res: cache[key][cat] = res
-                time.sleep(0.3)
+                time.sleep(WEATHER_API_REQUEST_SLEEP_SEC)
             
             # 캐시 안전하게 저장
             with open(CACHE_FILE, "w", encoding="utf-8") as f:
