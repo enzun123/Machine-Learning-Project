@@ -1,3 +1,4 @@
+import os
 import requests
 import json
 import csv
@@ -13,6 +14,8 @@ log = logging.getLogger(__name__)
 
 # ══════════════════════════════════════════════════════════════
 #  ① 경로 및 API 환경 설정 (pathlib 적용)
+#  - 관측(typ01) 인증: 환경변수 ``KMA_APIHUB_AUTH_KEY`` (동네예보 typ02와 동일 이름 권장).
+#  - 요청 간격: ``WEATHER_API_REQUEST_SLEEP_SEC`` (초, 기본 0.3).
 # ══════════════════════════════════════════════════════════════
 # 현재 파이썬 파일 위치를 기준으로 프로젝트 경로를 계산합니다.
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -27,7 +30,12 @@ KBO_FILES = [
 ]
 CACHE_FILE = EXTERNAL_DIR / "weather_cache.json"
 
-AUTH_KEY = "NtKXD3bRQkCSlw920cJAyA"
+# API허브(typ01) 관측·통계 — 동네예보와 동일 계정 키를 쓰는 경우가 많아 `KMA_APIHUB_AUTH_KEY`만 읽습니다.
+WEATHER_API_REQUEST_SLEEP_SEC = float(os.environ.get("WEATHER_API_REQUEST_SLEEP_SEC", "0.3"))
+
+
+def _typ01_auth_key() -> str:
+    return os.environ.get("KMA_APIHUB_AUTH_KEY", "").strip()
 
 # CSV에 저장될 컬럼명 및 API 매핑
 WEATHER_VARS = {
@@ -150,7 +158,11 @@ def parse_kma_text(raw_text):
     return dict(zip(headers, values)) if len(headers) >= 3 and len(values) >= 3 else {}
 
 def fetch_weather(category, date_str, stn_id):
-    params = {"tm1": date_str, "tm2": date_str, "stn_id": stn_id, "disp": 1, "help": 1, "authKey": AUTH_KEY}
+    key = _typ01_auth_key()
+    if not key:
+        log.warning("KMA_APIHUB_AUTH_KEY 가 비어 있어 관측 API 요청을 건너뜁니다.")
+        return {}
+    params = {"tm1": date_str, "tm2": date_str, "stn_id": stn_id, "disp": 1, "help": 1, "authKey": key}
     try:
         resp = requests.get(API_ENDPOINTS[category], params=params, timeout=20)
         return parse_kma_text(resp.text)
@@ -207,7 +219,7 @@ def main():
             for cat in missing_cats:
                 res = fetch_weather(cat, dt, stn)
                 if res: cache[key][cat] = res
-                time.sleep(0.3)
+                time.sleep(WEATHER_API_REQUEST_SLEEP_SEC)
             
             # 캐시 안전하게 저장
             with open(CACHE_FILE, "w", encoding="utf-8") as f:

@@ -7,6 +7,7 @@
   ``t3``에 맞는 POP이 비면 **경기일 12:00(KST)** 근처 예보 시각으로 한 번 더 시도합니다.
 
 인증: ``KMA_APIHUB_AUTH_KEY`` (동일 계정에서 **동네예보** 활용신청 필요).
+  ``scripts/data_collection/weather_api.py`` (typ01 관측 배치)도 동일 변수명만 사용합니다.
 
 격자(nx, ny)는 구장 대표값(행정구역 중심 근사). 공식 격자와 다를 수 있습니다.
 """
@@ -22,6 +23,11 @@ import pandas as pd
 import requests
 
 KST = ZoneInfo("Asia/Seoul")
+
+
+def _as_kst(dt: datetime) -> datetime:
+    """naive datetime은 KST로 간주하고, tz 있으면 KST로 변환."""
+    return dt.astimezone(KST) if dt.tzinfo else dt.replace(tzinfo=KST)
 
 ULTRA_URL = "https://apihub.kma.go.kr/api/typ02/openApi/VilageFcstInfoService_2.0/getUltraSrtFcst"
 VILAGE_URL = "https://apihub.kma.go.kr/api/typ02/openApi/VilageFcstInfoService_2.0/getVilageFcst"
@@ -56,15 +62,8 @@ STADIUM_GRID: dict[str, tuple[int, int]] = {
 
 
 def _auth_key() -> str:
-    k = os.environ.get("KMA_APIHUB_AUTH_KEY", "").strip()
-    if k:
-        return k
-    try:
-        from data_collection.weather_api import AUTH_KEY
-
-        return str(AUTH_KEY).strip()
-    except Exception:
-        return ""
+    """동네예보(typ02) 인증키 — `KMA_APIHUB_AUTH_KEY` 만 사용 (typ01 관측 스크립트와 동일 이름)."""
+    return os.environ.get("KMA_APIHUB_AUTH_KEY", "").strip()
 
 
 def stadium_grid_xy(stadium: str) -> tuple[int, int] | None:
@@ -192,7 +191,7 @@ def _parse_pop_pct(raw: str) -> float | None:
 
 def _ultra_base_candidates(now_kst: datetime, n: int = 6) -> list[tuple[str, str]]:
     """(base_date yyyymmdd, base_time HHMM) 최신부터 n개, KST."""
-    now_kst = now_kst.astimezone(KST) if now_kst.tzinfo else now_kst.replace(tzinfo=KST)
+    now_kst = _as_kst(now_kst)
     if now_kst.minute >= 45:
         b = now_kst.replace(minute=30, second=0, microsecond=0)
     else:
@@ -215,8 +214,8 @@ def _merged_ultra_base_candidates(
     같은 날 개시·3시간 전이 가까울 때 RN1 적중률을 높입니다.
     미래 발표 시각은 API에 쓸 수 없어 ``now_kst`` 이하만 남깁니다.
     """
-    now_kst = now_kst.astimezone(KST) if now_kst.tzinfo else now_kst.replace(tzinfo=KST)
-    tgt = target_kst.astimezone(KST) if target_kst.tzinfo else target_kst.replace(tzinfo=KST)
+    now_kst = _as_kst(now_kst)
+    tgt = _as_kst(target_kst)
     seen: set[tuple[str, str]] = set()
     merged: list[tuple[str, str]] = []
 
@@ -242,7 +241,7 @@ def _merged_ultra_base_candidates(
 
 def _vilage_base_candidates(now_kst: datetime, n: int = 8) -> list[tuple[str, str]]:
     """단기예보 발표 시각(02,05,…,23) — 현재(KST) 이전 중 최신순."""
-    now_kst = now_kst.astimezone(KST) if now_kst.tzinfo else now_kst.replace(tzinfo=KST)
+    now_kst = _as_kst(now_kst)
     slots = [23, 20, 17, 14, 11, 8, 5, 2]
     all_c: list[tuple[datetime, str, str]] = []
     for day_off in range(0, 4):
@@ -485,34 +484,27 @@ def game_day_noon_kst(game_start: pd.Timestamp) -> pd.Timestamp:
     )
 
 
-def forecast_ref_for_rain_cancel_rules(
-    stadium: str,
-    game_start: pd.Timestamp,
-    auth_key: str | None = None,
-) -> dict:
-    """
-    규칙 기반 참고용 요약 (우천 **취소 예측 아님**).
-
-    - 가능하면 초단기 RN1(개시 3시간 전 정시 근처).
-    - 실패 시 단기 POP을 ``t3``에 맞춰 조회하고, 그래도 없으면 **경기일 12:00(KST)** 근처
-      단기 POP으로 한 번 더 시도한다(단기는 며칠 앞 예보를 포함).
-    """
+def _fr_resolve_auth(auth_key: str | None) -> tuple[str | None, dict | None]:
+    """(인증 문자열, 실패 시 즉시 반환할 dict)"""
     auth = (auth_key or _auth_key()).strip()
     if not auth:
-        return {
+        return None, {
             "ok": False,
             "msg": "KMA_APIHUB_AUTH_KEY 가 없습니다. 환경변수 또는 `.streamlit/secrets.toml`을 설정하세요.",
             "mode": "none",
         }
+    return auth, None
 
+
+def _fr_resolve_grid(stadium: str) -> tuple[tuple[int, int] | None, dict | None]:
     grid = stadium_grid_xy(stadium)
     if grid is None:
-        return {"ok": False, "msg": "구장에 매핑된 동네예보 격자가 없습니다.", "mode": "none"}
+        return None, {"ok": False, "msg": "구장에 매핑된 동네예보 격자가 없습니다.", "mode": "none"}
+    return grid, None
 
-    nx, ny = grid
-    t3 = three_hours_before_game_start(game_start)
-    now = datetime.now(KST)
 
+def _fr_time_window_or_error(t3: pd.Timestamp, now: datetime) -> dict | None:
+    """시간창 밖이면 오류 dict, 조회 진행 가능하면 None."""
     if t3 > now + timedelta(days=10):
         return {
             "ok": False,
@@ -520,7 +512,6 @@ def forecast_ref_for_rain_cancel_rules(
             "mode": "none",
             "target_kst": str(t3),
         }
-
     if t3 + timedelta(hours=1) < now - timedelta(days=1):
         return {
             "ok": False,
@@ -528,20 +519,46 @@ def forecast_ref_for_rain_cancel_rules(
             "mode": "none",
             "target_kst": str(t3),
         }
+    return None
 
+
+def _fr_ultra_rn1_result(
+    nx: int,
+    ny: int,
+    t3: pd.Timestamp,
+    auth: str,
+) -> tuple[dict | None, str | None]:
+    """초단기 RN1 성공 시 ref dict, 아니면 (None, err_u)."""
     rn1, ultra_base, err_u = ultra_rn1_mm_for_target_hour(nx, ny, t3, auth_key=auth)
     if rn1 is not None:
-        return {
-            "ok": True,
-            "mode": "ultra_rn1",
-            "mm_h": float(rn1),
-            "base": ultra_base,
-            "target_kst": str(t3),
-            "nx": nx,
-            "ny": ny,
-            "detail": None,
-        }
+        return (
+            {
+                "ok": True,
+                "mode": "ultra_rn1",
+                "mm_h": float(rn1),
+                "base": ultra_base,
+                "target_kst": str(t3),
+                "nx": nx,
+                "ny": ny,
+                "detail": None,
+            },
+            None,
+        )
+    return None, err_u
 
+
+def _fr_vilage_pop_result(
+    nx: int,
+    ny: int,
+    t3: pd.Timestamp,
+    game_start: pd.Timestamp,
+    auth: str,
+    err_u: str | None,
+) -> tuple[dict | None, str | None, str | None]:
+    """
+    단기 POP 경로. 성공 시 ref dict.
+    반환: (ref 또는 None, err_v_t3, err_v_noon)
+    """
     pop, vbase, err_v_t3 = vilage_pop_at_nearest_fcst(nx, ny, t3, auth_key=auth)
     pop_anchor: pd.Timestamp | None = None
     err_v_noon: str | None = None
@@ -552,19 +569,23 @@ def forecast_ref_for_rain_cancel_rules(
             if pop is not None:
                 pop_anchor = noon
 
-    if pop is not None:
-        detail: str | None
-        if pop_anchor is not None:
-            detail = (
-                f"개시 3시간 전({t3.strftime('%m/%d %H:%M')} KST)에 맞는 단기 POP이 비어 "
-                f"경기일 낮 12:00 근처({pop_anchor.strftime('%m/%d %H:%M')} KST) 예보 시각으로 대체했습니다. "
-                "(언론에서 말하는 ‘개시 3시간 전’ 시각과는 다를 수 있습니다.)"
-            )
-            if err_u:
-                detail = f"{detail} (초단기: {redact_api_secrets(err_u)})"
-        else:
-            detail = err_u
-        return {
+    if pop is None:
+        return None, err_v_t3, err_v_noon
+
+    detail: str | None
+    if pop_anchor is not None:
+        detail = (
+            f"개시 3시간 전({t3.strftime('%m/%d %H:%M')} KST)에 맞는 단기 POP이 비어 "
+            f"경기일 낮 12:00 근처({pop_anchor.strftime('%m/%d %H:%M')} KST) 예보 시각으로 대체했습니다. "
+            "(언론에서 말하는 ‘개시 3시간 전’ 시각과는 다를 수 있습니다.)"
+        )
+        if err_u:
+            detail = f"{detail} (초단기: {redact_api_secrets(err_u)})"
+    else:
+        detail = err_u
+
+    return (
+        {
             "ok": True,
             "mode": "vilage_pop",
             "pop_pct": float(pop),
@@ -574,8 +595,18 @@ def forecast_ref_for_rain_cancel_rules(
             "nx": nx,
             "ny": ny,
             "detail": detail,
-        }
+        },
+        err_v_t3,
+        err_v_noon,
+    )
 
+
+def _fr_all_failed_response(
+    t3: pd.Timestamp,
+    err_u: str | None,
+    err_v_t3: str | None,
+    err_v_noon: str | None,
+) -> dict:
     raw = _join_fcst_errors(err_u, err_v_t3, err_v_noon)
     if _kma_errors_imply_subscription_needed(err_u, err_v_t3, err_v_noon):
         msg = (
@@ -596,6 +627,45 @@ def forecast_ref_for_rain_cancel_rules(
         "mode": "none",
         "target_kst": str(t3),
     }
+
+
+def forecast_ref_for_rain_cancel_rules(
+    stadium: str,
+    game_start: pd.Timestamp,
+    auth_key: str | None = None,
+) -> dict:
+    """
+    규칙 기반 참고용 요약 (우천 **취소 예측 아님**).
+
+    - 가능하면 초단기 RN1(개시 3시간 전 정시 근처).
+    - 실패 시 단기 POP을 ``t3``에 맞춰 조회하고, 그래도 없으면 **경기일 12:00(KST)** 근처
+      단기 POP으로 한 번 더 시도한다(단기는 며칠 앞 예보를 포함).
+    """
+    auth, err = _fr_resolve_auth(auth_key)
+    if err is not None:
+        return err
+
+    grid, err_g = _fr_resolve_grid(stadium)
+    if err_g is not None:
+        return err_g
+
+    nx, ny = grid
+    t3 = three_hours_before_game_start(game_start)
+    now = datetime.now(KST)
+
+    err_tw = _fr_time_window_or_error(t3, now)
+    if err_tw is not None:
+        return err_tw
+
+    ultra_ref, err_u = _fr_ultra_rn1_result(nx, ny, t3, auth)
+    if ultra_ref is not None:
+        return ultra_ref
+
+    vil_ref, err_v_t3, err_v_noon = _fr_vilage_pop_result(nx, ny, t3, game_start, auth, err_u)
+    if vil_ref is not None:
+        return vil_ref
+
+    return _fr_all_failed_response(t3, err_u, err_v_t3, err_v_noon)
 
 
 def rule_band_from_mm_h(mm: float) -> tuple[str, str, str]:
