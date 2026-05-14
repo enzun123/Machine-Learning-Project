@@ -6,6 +6,7 @@ KBO 일자별 관중 기록 스크래핑 (GraphDaily)
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import re
 import sys
@@ -19,6 +20,7 @@ if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
 from common.kbo_regular_start_time import apply_default_start_time_strings
+from common.stadium_region import stadium_to_region_key
 from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -30,33 +32,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RAW_DIR = PROJECT_ROOT / "data" / "raw"
 
-# 구장명(부분 일치) → 기상·지역 데이터 조인용 키
-# weather_api.STADIUM_STN_MAP·관측 지점(청주 131, 대전/한밭 133, 포항 138 등)과 동일 권역으로 맞춤.
-# 한밭은 대전 구장 별칭 → 대전 관측권; 청주·포항은 KBO 임시/대체 구장.
-STADIUM_TO_REGION_KEY: dict[str, str] = {
-    "잠실": "서울_잠실",
-    "고척": "서울_고척",
-    "수원": "경기_수원",
-    "인천": "인천",
-    "문학": "인천",
-    "사직": "부산",
-    "한밭": "대전",
-    "대전": "대전",
-    "광주": "광주",
-    "대구": "대구",
-    "창원": "경남_창원",
-    "울산": "울산",
-    "청주": "청주",
-    "포항": "포항",
-}
-
-
-def stadium_to_region_key(stadium: str) -> str:
-    s = str(stadium).strip()
-    for needle, key in STADIUM_TO_REGION_KEY.items():
-        if needle in s:
-            return key
-    return "기타"
+logger = logging.getLogger(__name__)
 
 
 def weekday_to_bucket(day_label: str) -> str:
@@ -184,16 +160,35 @@ def detect_row_schema(sample: list[str], headers: list[str]) -> str:
     구버전: 날짜, 요일, 시간, 원정vs홈, 구장, 관중수
     """
     hn = [re.sub(r"\s+", "", str(x)) for x in headers]
-    if headers and any("홈" in x for x in hn) and any("방문" in x for x in hn):
+    has_home = bool(headers) and any("홈" in x for x in hn)
+    has_visit = bool(headers) and any("방문" in x for x in hn)
+    if headers and has_home and has_visit:
         return "dict_header"
     if headers:
+        logger.warning(
+            "GraphDaily 스키마: thead에 홈/방문 열이 없는데 dict_header로 처리합니다. "
+            "열 이름 변경 시 파싱이 틀어질 수 있습니다. headers=%r sample_first_cells=%r",
+            headers,
+            sample[:8] if sample else [],
+        )
         return "dict_header"
     if sample and len(sample) >= 6:
         if re.search(r"\d{1,2}\s*:\s*\d{2}", sample[2]):
             return "legacy_list"
         if re.search(r"(?i)vs", sample[3]):
             return "legacy_list"
+        logger.warning(
+            "GraphDaily 스키마: thead 없이 6열 이상 행을 home_away_dict로 가정합니다 "
+            "(2번째 열에 시각, 3번째에 vs 패턴 없음). sample=%r",
+            sample[:8],
+        )
         return "home_away_dict"
+    logger.warning(
+        "GraphDaily 스키마: thead·샘플 부족으로 legacy_list(고정 6열)로 가정합니다. "
+        "headers=%r sample=%r",
+        headers,
+        sample[:8] if sample else sample,
+    )
     return "legacy_list"
 
 
@@ -231,37 +226,53 @@ def click_search_button(driver: webdriver.Chrome) -> None:
     time.sleep(2)
 
 
+def _detect_team_column_plan(df: pd.DataFrame) -> tuple[str, str | None]:
+    """
+    홈/방문 팀명이 들어 있는 컬럼 조합을 결정한다.
+    반환: (모드, 경기 텍스트 컬럼명 또는 None)
+    모드: home_visit | 경기_vs | 경기_cell | empty
+    """
+    cols = df.columns
+    if "홈" in cols and "방문" in cols:
+        return "home_visit", None
+    if "경기(원정vs홈)" in cols:
+        return "경기_vs", "경기(원정vs홈)"
+    game_key = None
+    for candidate in ("경기(원정vs홈)", "경기"):
+        if candidate in cols:
+            game_key = candidate
+            break
+    if game_key is None:
+        game_key = next(
+            (k for k in cols if "경기" in str(k) and str(k) != "경기날짜"),
+            None,
+        )
+    if game_key is not None:
+        return "경기_cell", str(game_key)
+    return "empty", None
+
+
 def enrich_attendance_df(df: pd.DataFrame, year: int) -> pd.DataFrame:
     """스크래핑 원본 → 모델용 컬럼 정리."""
     out = df.copy()
     out.columns = [str(c).strip() for c in out.columns]
     out.insert(0, "연도", year)
 
-    if "홈" in out.columns and "방문" in out.columns:
+    mode, game_col = _detect_team_column_plan(out)
+    if mode == "home_visit":
         out["홈팀"] = out["홈"].astype(str).str.strip()
         out["방문팀"] = out["방문"].astype(str).str.strip()
-    elif "경기(원정vs홈)" in out.columns:
-        away, home = zip(*out["경기(원정vs홈)"].map(split_away_home))
+    elif mode == "경기_vs":
+        away, home = zip(*out[str(game_col)].map(split_away_home))
+        out["방문팀"] = away
+        out["홈팀"] = home
+    elif mode == "경기_cell":
+        away, home = zip(*out[str(game_col)].map(split_away_home_graph_daily))
         out["방문팀"] = away
         out["홈팀"] = home
     else:
-        game_key = None
-        for candidate in ("경기(원정vs홈)", "경기"):
-            if candidate in out.columns:
-                game_key = candidate
-                break
-        if game_key is None:
-            game_key = next(
-                (k for k in out.columns if "경기" in str(k) and str(k) != "경기날짜"),
-                None,
-            )
-        if game_key:
-            away, home = zip(*out[game_key].map(split_away_home_graph_daily))
-            out["방문팀"] = away
-            out["홈팀"] = home
-        else:
-            out["홈팀"] = ""
-            out["방문팀"] = ""
+        out["홈팀"] = ""
+        out["방문팀"] = ""
 
     time_col = None
     for name in ("시간", "개시", "개시시각"):
