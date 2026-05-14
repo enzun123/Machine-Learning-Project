@@ -1,13 +1,17 @@
-import requests
-import json
 import csv
-import time
+import json
 import logging
+import os
 import re
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import requests
+
 from common.logging_config import setup_logging
+
+log = logging.getLogger(__name__)
 
 # ══════════════════════════════════════════════════════════════
 #  ① 경로 및 API 환경 설정 (pathlib 적용)
@@ -25,9 +29,12 @@ KBO_FILES = [
 ]
 CACHE_FILE = EXTERNAL_DIR / "weather_cache.json"
 
-log = logging.getLogger(__name__)
+KMA_APIHUB_AUTH_KEY_ENV = "KMA_APIHUB_AUTH_KEY"
 
-AUTH_KEY = "NtKXD3bRQkCSlw920cJAyA"
+
+def _auth_key() -> str:
+    return os.environ.get(KMA_APIHUB_AUTH_KEY_ENV, "").strip()
+
 
 # CSV에 저장될 컬럼명 및 API 매핑
 WEATHER_VARS = {
@@ -150,11 +157,29 @@ def parse_kma_text(raw_text):
     return dict(zip(headers, values)) if len(headers) >= 3 and len(values) >= 3 else {}
 
 def fetch_weather(category, date_str, stn_id):
-    params = {"tm1": date_str, "tm2": date_str, "stn_id": stn_id, "disp": 1, "help": 1, "authKey": AUTH_KEY}
+    key = _auth_key()
+    if not key:
+        log.warning(
+            "환경변수 %s 가 비어 있어 %s (%s) 요청을 건너뜁니다.",
+            KMA_APIHUB_AUTH_KEY_ENV,
+            category,
+            date_str,
+        )
+        return {}
+    params = {
+        "tm1": date_str,
+        "tm2": date_str,
+        "stn_id": stn_id,
+        "disp": 1,
+        "help": 1,
+        "authKey": key,
+    }
     try:
         resp = requests.get(API_ENDPOINTS[category], params=params, timeout=20)
         return parse_kma_text(resp.text)
-    except: return {}
+    except requests.RequestException as e:
+        log.warning("날씨 API 오류 (%s, 지점 %s, %s): %s", category, stn_id, date_str, e)
+        return {}
 
 # ══════════════════════════════════════════════════════════════
 #  ③ 메인 실행 로직
@@ -164,6 +189,14 @@ def main():
     log.info(f"프로젝트 루트 확인: {PROJECT_ROOT}")
     INTERIM_DIR.mkdir(parents=True, exist_ok=True)
     EXTERNAL_DIR.mkdir(parents=True, exist_ok=True)
+
+    if not _auth_key():
+        log.error(
+            "환경변수 %s 에 기상청 API허브 인증키를 설정한 뒤 다시 실행하세요. "
+            "(예: machine-learning-project/.env.example 참고)",
+            KMA_APIHUB_AUTH_KEY_ENV,
+        )
+        return
     
     # 1. 원본 파일 로드
     files_data = {}
@@ -186,8 +219,8 @@ def main():
         try:
             with open(CACHE_FILE, "r", encoding="utf-8") as f:
                 cache = json.load(f)
-        except:
-            log.warning("캐시 파일 읽기 실패. 새로 생성합니다.")
+        except (json.JSONDecodeError, OSError) as e:
+            log.warning("캐시 파일 읽기 실패. 새로 생성합니다: %s", e)
 
     # 3. 데이터 수집
     unique_pairs = set()

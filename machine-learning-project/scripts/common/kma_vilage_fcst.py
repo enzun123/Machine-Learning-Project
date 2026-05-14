@@ -56,15 +56,7 @@ STADIUM_GRID: dict[str, tuple[int, int]] = {
 
 
 def _auth_key() -> str:
-    k = os.environ.get("KMA_APIHUB_AUTH_KEY", "").strip()
-    if k:
-        return k
-    try:
-        from data_collection.weather_api import AUTH_KEY
-
-        return str(AUTH_KEY).strip()
-    except Exception:
-        return ""
+    return os.environ.get("KMA_APIHUB_AUTH_KEY", "").strip()
 
 
 def stadium_grid_xy(stadium: str) -> tuple[int, int] | None:

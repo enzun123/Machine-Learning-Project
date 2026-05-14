@@ -6,6 +6,7 @@ KBO 일자별 관중 기록 스크래핑 (GraphDaily)
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import re
 import sys
@@ -18,11 +19,14 @@ from common.logging_config import setup_logging
 from common.kbo_regular_start_time import apply_default_start_time_strings
 from bs4 import BeautifulSoup
 from selenium import webdriver
+from selenium.common.exceptions import NoSuchElementException, WebDriverException
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import Select
 from webdriver_manager.chrome import ChromeDriverManager
+
+log = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RAW_DIR = PROJECT_ROOT / "data" / "raw"
@@ -440,8 +444,16 @@ def scrape_kbo_attendance(years: list[int], *, headless: bool = True) -> dict[in
                     driver.execute_script("arguments[0].click();", next_button)
                     time.sleep(2)
                     page_num += 1
-                except Exception:
-                    print(f"{year}년 모든 페이지 수집 완료.")
+                except NoSuchElementException:
+                    print(f"{year}년 마지막 페이지 도달 (다음 페이지 링크 없음).")
+                    break
+                except WebDriverException as e:
+                    log.warning(
+                        "%s년 페이지 이동 중 WebDriver 오류: %s",
+                        year,
+                        e,
+                        exc_info=True,
+                    )
                     break
 
     except Exception as e:
