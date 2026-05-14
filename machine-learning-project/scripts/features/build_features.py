@@ -12,7 +12,6 @@ build_features.py  ─  개선 이력
 [수정8] 관중수 이상치 소프트 클리핑: stadium_capacity * 1.05 초과분 제거
 """
 
-import os
 import sys
 from collections import defaultdict, deque
 from pathlib import Path
@@ -44,7 +43,9 @@ REQUIRED_COLS = [
     "관중수",
 ]
 
-FORM_AND_DRAW_COLS = [
+# 시점 이전 요약: 홈/원정·매치업 관중 이력, 리그 무승부 비율 계열, 시즌 진행도 등
+# (과거 이름 FORM_AND_DRAW_COLS — 'draw'는 무승부 비율이며 관중 평균 피처가 대부분)
+PRIOR_ATTENDANCE_FORM_COLS = [
     "home_prior_mean_att",
     "visitor_prior_mean_att",
     "home_last5_mean_att",
@@ -90,7 +91,7 @@ MODEL_READY_COLUMNS = [
     "is_pennant_race",           # 트랙1
     "playoff_urgency",           # 트랙1
     "month_x_playoff_urgency",   # 트랙1
-    *FORM_AND_DRAW_COLS,
+    *PRIOR_ATTENDANCE_FORM_COLS,
     "관중수",
 ]
 
@@ -118,6 +119,10 @@ def add_season_form_and_draw_proxy(df: pd.DataFrame) -> pd.DataFrame:
     [수정1] cold-start: 시즌 첫 경기 → 전 시즌 팀 평균으로 초기화
     [수정4] season_progress: 홈팀 소화 경기수 / FULL_SEASON_GAMES
     [수정6] matchup_prior_mean_att: (홈팀, 방문팀) 역대 평균 관중
+
+    복잡도: 각 행에서 리그 전체 팀 평균 목록을 다시 만들어 퍼센타일을 구하므로
+    대략 O(경기 수 × 팀 수). KBO 규모(연도당 수천 경기·약 10팀)에서는 실용적이며,
+    리그·연도가 크게 늘면 시즌별 리그 평균을 미리 캐시하는 방식으로 줄일 수 있음.
     """
     out = df.copy()
     if "game_no" not in out.columns:
@@ -222,11 +227,11 @@ def add_season_form_and_draw_proxy(df: pd.DataFrame) -> pd.DataFrame:
         team_games[kh] += 1
         team_games[kv] += 1
 
-    feat = pd.DataFrame(rec, columns=FORM_AND_DRAW_COLS)
-    work[FORM_AND_DRAW_COLS] = feat.values
+    feat = pd.DataFrame(rec, columns=PRIOR_ATTENDANCE_FORM_COLS)
+    work[PRIOR_ATTENDANCE_FORM_COLS] = feat.values
     work.index = orig_index
-    joined = out.join(work[FORM_AND_DRAW_COLS], how="left")
-    for c in FORM_AND_DRAW_COLS:
+    joined = out.join(work[PRIOR_ATTENDANCE_FORM_COLS], how="left")
+    for c in PRIOR_ATTENDANCE_FORM_COLS:
         med_y = joined.groupby("연도", observed=True)[c].transform("median")
         joined[c] = joined[c].fillna(med_y).fillna(joined[c].median())
         joined[c] = joined[c].fillna(0.0)
@@ -341,12 +346,10 @@ def add_calendar_event_flags(df: pd.DataFrame) -> pd.DataFrame:
     return out.drop(columns=["_dt", "_opener_dt"], errors="ignore")
 
 
-def create_features_pro(df_main, df_stadium, standings_path=None):
+def _prepare_main_frame(df_main: pd.DataFrame) -> pd.DataFrame:
     df = df_main.copy()
     df["관중수"] = pd.to_numeric(df["관중수"], errors="coerce")
-
     df["구장"] = df["구장"].replace(STADIUM_ALIAS)
-
     for col in [
         "일합계강수량(mm)",
         "일평균기온(°C)",
@@ -355,7 +358,10 @@ def create_features_pro(df_main, df_stadium, standings_path=None):
     ]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
+    return df
 
+
+def _add_stadium_capacity_and_clip(df: pd.DataFrame, df_stadium: pd.DataFrame) -> pd.DataFrame:
     if not df_stadium.empty and "구장" in df_stadium.columns and "최대수용인원" in df_stadium.columns:
         st = df_stadium.copy()
         st["구장"] = st["구장"].replace(STADIUM_ALIAS)
@@ -371,10 +377,13 @@ def create_features_pro(df_main, df_stadium, standings_path=None):
         cap_mean = 0.0
     df["stadium_capacity"] = df["stadium_capacity"].fillna(cap_mean)
 
-    # [수정8] 관중수 소프트 클리핑 (구장 정원 105% 초과는 데이터 오류로 간주)
     cap_clip = df["stadium_capacity"].clip(lower=1.0) * 1.05
+    # [수정8] 관중수 소프트 클리핑 (구장 정원 105% 초과는 데이터 오류로 간주)
     df["관중수"] = df["관중수"].clip(upper=cap_clip)
+    return df
 
+
+def _add_weather_and_buckets(df: pd.DataFrame) -> pd.DataFrame:
     df["일합계강수량(mm)"] = df["일합계강수량(mm)"].fillna(0)
     df["is_rain"] = (df["일합계강수량(mm)"] > 0).astype(int)
 
@@ -412,7 +421,10 @@ def create_features_pro(df_main, df_stadium, standings_path=None):
         bins=[-1, 1.5, 3.3, 5.4, float("inf")],
         labels=["Calm", "Light", "Moderate", "Strong"],
     )
+    return df
 
+
+def _add_weekday_derby_and_size(df: pd.DataFrame) -> pd.DataFrame:
     df["is_weekend"] = df["요일"].isin(["토", "일"]).astype(int)
     weekday_map = {"월": 0, "화": 1, "수": 2, "목": 3, "금": 4, "토": 5, "일": 6}
     df["weekday_num"] = df["요일"].map(weekday_map)
@@ -420,17 +432,14 @@ def create_features_pro(df_main, df_stadium, standings_path=None):
     df["weekday_sin"] = np.where(valid_wd, np.sin(2 * np.pi * df["weekday_num"] / 7), 0.0)
     df["weekday_cos"] = np.where(valid_wd, np.cos(2 * np.pi * df["weekday_num"] / 7), 0.0)
 
-    # [수정5] 요일 원핫 플래그
     df["is_friday"] = (df["요일"] == "금").astype(int)
     df["is_saturday"] = (df["요일"] == "토").astype(int)
     df["is_sunday"] = (df["요일"] == "일").astype(int)
 
     df["stadium_x_rain"] = df["구장"].astype(str) + "_" + df["is_rain"].astype(str)
 
-    # [수정7] 소규모/이벤트 구장 플래그
     df["is_small_stadium"] = (df["stadium_capacity"] < SMALL_STADIUM_CAPACITY).astype(int)
 
-    # 더비 매치업 플래그 (라이벌 경기 — 홈/원정 관계없이 양방향)
     derby_pairs: set[frozenset[str]] = {
         frozenset({"LG", "두산"}),
         frozenset({"롯데", "NC"}),
@@ -442,34 +451,41 @@ def create_features_pro(df_main, df_stadium, standings_path=None):
         int(frozenset({str(h), str(v)}) in derby_pairs)
         for h, v in zip(df["홈팀"].astype(str), df["방문팀"].astype(str))
     ]
+    return df
 
-    # 트랙1: 이벤트 플래그 (개막전, 어린이날)
+
+def _add_calendar_standings_and_playoff(
+    df: pd.DataFrame, standings_path: str | Path | None
+) -> pd.DataFrame:
     df = add_calendar_event_flags(df)
-
-    # 트랙1: 승률·5위 게임차·페넌트레이스 플래그 조인
     df = join_standings_features(df, standings_path)
-
-    # 트랙1: 월 × 포스트시즌 긴박도 교호작용
     df["playoff_urgency"] = (3.0 - df["home_gb_to_5th"].clip(-10, 3)).clip(lower=0.0)
     df["month_x_playoff_urgency"] = (
         pd.to_numeric(df["월"], errors="coerce").fillna(0) * df["playoff_urgency"]
     )
+    return df
 
+
+def create_features_pro(df_main, df_stadium, standings_path=None):
+    df = _prepare_main_frame(df_main)
+    df = _add_stadium_capacity_and_clip(df, df_stadium)
+    df = _add_weather_and_buckets(df)
+    df = _add_weekday_derby_and_size(df)
+    df = _add_calendar_standings_and_playoff(df, standings_path)
     df = add_season_form_and_draw_proxy(df)
     return df
 
 
 if __name__ == "__main__":
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.abspath(os.path.join(base_dir, "../../"))
+    project_root = Path(__file__).resolve().parents[2]
 
-    path_main = os.path.join(project_root, "data/processed/final_dataset.csv")
-    path_stadium = os.path.join(project_root, "data/external/kbo_stadium_info.csv")
-    path_standings = os.path.join(project_root, "data/external/kbo_standings_daily.csv")
-    save_path = os.path.join(project_root, "data/processed/kbo_train_ready.csv")
+    path_main = project_root / "data" / "processed" / "final_dataset.csv"
+    path_stadium = project_root / "data" / "external" / "kbo_stadium_info.csv"
+    path_standings = project_root / "data" / "external" / "kbo_standings_daily.csv"
+    save_path = project_root / "data" / "processed" / "kbo_train_ready.csv"
 
     try:
-        if not os.path.exists(path_main):
+        if not path_main.exists():
             raise FileNotFoundError(
                 f"입력 CSV 없음: {path_main}\n"
                 "먼저 실행: python3 scripts/preprocessing/preprocess_attendance_weather.py"
@@ -478,7 +494,7 @@ if __name__ == "__main__":
         df_final = pd.read_csv(path_main, encoding="utf-8-sig")
         df_st_info = (
             pd.read_csv(path_stadium, encoding="utf-8-sig")
-            if os.path.exists(path_stadium)
+            if path_stadium.exists()
             else pd.DataFrame()
         )
 
