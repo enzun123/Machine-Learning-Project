@@ -3,9 +3,10 @@
 import hashlib
 import html
 import logging
-import re
 import os
+import re
 import sys
+from pathlib import Path
 
 import joblib
 import matplotlib.font_manager as fm
@@ -13,7 +14,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import streamlit as st
-from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -51,8 +51,15 @@ plt.rcParams["axes.unicode_minus"] = False
 # =========================
 st.set_page_config(
     page_title="KBO 관람 수요 예측 시스템",
-    layout="wide"
+    layout="wide",
 )
+
+_SCRIPTS = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = _SCRIPTS.parent
+if str(_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS))
+
+from common.congestion_levels import classify_congestion_pct
 
 # =========================
 # 데이터 불러오기
@@ -156,14 +163,6 @@ def _default_home_team_for_stadium(stadium_name: str, attendance_df: pd.DataFram
     return homes[0] if homes else ""
 
 
-df = load_data()
-
-_SCRIPTS = Path(__file__).resolve().parent.parent
-PROJECT_ROOT = _SCRIPTS.parent
-if str(_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS))
-
-
 def _fallback_stadium_capacity() -> dict[str, int]:
     """CSV를 못 읽을 때만 사용 (kbo_stadium_info.csv와 동기 유지 권장)."""
     return {
@@ -210,6 +209,31 @@ def load_stadium_capacity_map() -> dict[str, int]:
     return _fallback_stadium_capacity()
 
 
+def _ensure_session_data() -> None:
+    if "df" not in st.session_state:
+        st.session_state.df = load_data()
+    if "cap_by_stadium" not in st.session_state:
+        st.session_state.cap_by_stadium = load_stadium_capacity_map()
+
+
+def get_capacity(stadium_name: str) -> int:
+    from common.stadium_aliases import STADIUM_ALIAS
+
+    cap_by = st.session_state.get("cap_by_stadium") or {}
+    raw = str(stadium_name).strip()
+    if not raw:
+        return 20000
+    norm = STADIUM_ALIAS.get(raw, raw)
+    if norm in cap_by:
+        return int(cap_by[norm])
+    if raw in cap_by:
+        return int(cap_by[raw])
+    for gu, c in cap_by.items():
+        if gu in raw or raw in gu:
+            return int(c)
+    return 20000
+
+
 try:
     _KBO_RECENT_TTL = int(os.environ.get("KBO_APP_RECENT_TTL_SEC", "900"))
 except ValueError:
@@ -242,28 +266,7 @@ def _recent_five_kbo(stadium: str, before_iso: str) -> pd.DataFrame:
         return pd.DataFrame()
 
 
-CAP_BY_STADIUM = load_stadium_capacity_map()
-
-
-def get_capacity(stadium_name: str) -> int:
-    from common.stadium_aliases import STADIUM_ALIAS
-
-    raw = str(stadium_name).strip()
-    if not raw:
-        return 20000
-    norm = STADIUM_ALIAS.get(raw, raw)
-    if norm in CAP_BY_STADIUM:
-        return int(CAP_BY_STADIUM[norm])
-    if raw in CAP_BY_STADIUM:
-        return int(CAP_BY_STADIUM[raw])
-    for gu, c in CAP_BY_STADIUM.items():
-        if gu in raw or raw in gu:
-            return int(c)
-    return 20000
-
-
 # ----- ML (attendance_rf_pipeline.joblib) -----
-RAIN_BINS_ML = [-1.0, 0.0, 1.0, 5.0, float("inf")]
 RAIN_LABELS_ML = ["No_Rain", "Rain_0_1mm", "Rain_1_5mm", "Rain_5mm_plus"]
 _SMALL_STADIUM_ML = 15_000
 _DERBY_PAIRS_ML = {
@@ -276,16 +279,16 @@ _DERBY_PAIRS_ML = {
 
 
 def _scalar_rain_bucket_ml(mm: float) -> str:
-    s = pd.cut(
-        pd.Series([float(mm)]),
-        bins=RAIN_BINS_ML,
-        labels=RAIN_LABELS_ML,
-        include_lowest=True,
-    )
-    v = s.iloc[0]
-    if pd.isna(v):
-        return "No_Rain"
-    return str(v)
+    x = float(mm)
+    if -1.0 <= x <= 0.0:
+        return RAIN_LABELS_ML[0]
+    if 0.0 < x <= 1.0:
+        return RAIN_LABELS_ML[1]
+    if 1.0 < x <= 5.0:
+        return RAIN_LABELS_ML[2]
+    if 5.0 < x:
+        return RAIN_LABELS_ML[3]
+    return RAIN_LABELS_ML[0]
 
 
 def _scalar_temp_bucket_ml(t: float) -> str:
@@ -648,177 +651,20 @@ def _cached_forecast_rain_ref(stadium: str, game_start_iso: str, _auth_fp: str):
 # =========================
 # CSS 스타일
 # =========================
-st.markdown("""
-<style>
+_ensure_session_data()
+df = st.session_state.df
 
-.stApp {
-    background-color: #07111f;
-    color: white;
-}
-
-[data-testid="stSidebar"] {
-    background-color: #0b1726;
-    border-right: 1px solid #24384f;
-}
-
-.main-title {
-    font-size: 32px;
-    font-weight: 900;
-    color: white;
-    margin-bottom: 8px;
-}
-
-.sub-text {
-    color: #9fb3c8;
-    font-size: 15px;
-}
-
-.match-text {
-    color: white;
-    font-size: 18px;
-    margin-top: 18px;
-    margin-bottom: 18px;
-}
-
-.predict-box {
-    border: 1px dashed #18e6ff;
-    border-radius: 14px;
-    padding: 45px;
-    text-align: center;
-    margin-top: 20px;
-    margin-bottom: 25px;
-    background-color: #081525;
-}
-
-.predict-label {
-    color: white;
-    font-size: 18px;
-    margin-bottom: 10px;
-}
-
-.predict-number {
-    color: #18e6ff;
-    font-size: 62px;
-    font-weight: 900;
-}
-
-.card {
-    background-color: #101d2d;
-    border: 1px solid #263f5c;
-    border-radius: 15px;
-    padding: 25px;
-    text-align: center;
-}
-
-.card-title {
-    color: #b8c7d9;
-    font-size: 17px;
-    margin-bottom: 10px;
-}
-
-.card-value {
-    color: white;
-    font-size: 34px;
-    font-weight: 800;
-}
-
-.card-high {
-    color: #ff4b5c;
-    font-size: 38px;
-    font-weight: 900;
-}
-
-.action-low {
-    background-color: #0f3425;
-    border: 1px solid #2ecc71;
-    border-radius: 15px;
-    padding: 25px;
-    color: white;
-}
-
-.action-mid {
-    background-color: #3c3414;
-    border: 1px solid #f1c40f;
-    border-radius: 15px;
-    padding: 25px;
-    color: white;
-}
-
-.action-high {
-    background-color: #3b1116;
-    border: 1px solid #ff4b5c;
-    border-radius: 15px;
-    padding: 25px;
-    color: white;
-}
-
-.disclaimer-under-predict {
-    background-color: #101d2d;
-    border: 1px solid #2a4a6f;
-    border-radius: 12px;
-    padding: 16px 18px;
-    margin: 16px 0 20px 0;
-    font-size: 13px;
-    line-height: 1.65;
-    color: #c5d8ec;
-}
-.disclaimer-under-predict b {
-    color: #e8f0f8;
-}
-.disclaimer-under-predict code {
-    font-size: 12px;
-    color: #b8d4f0;
-}
-
-.rain-risk-box {
-    border-radius: 10px;
-    padding: 14px 16px;
-    margin-top: 14px;
-    margin-bottom: 8px;
-    font-size: 14px;
-    line-height: 1.55;
-    color: #e8eef5;
-}
-
-.rain-risk-low {
-    border: 1px solid #2ecc71;
-    background: rgba(46, 204, 113, 0.09);
-}
-
-.rain-risk-mid {
-    border: 1px solid #f39c12;
-    background: rgba(243, 156, 18, 0.12);
-}
-
-.rain-risk-high {
-    border: 1px solid #e74c3c;
-    background: rgba(231, 76, 60, 0.11);
-}
-
-.rain-fcst-warn {
-    border: 1px solid #c9a227;
-    background: rgba(201, 162, 39, 0.14);
-    border-radius: 10px;
-    padding: 14px 16px;
-    margin-top: 14px;
-    margin-bottom: 8px;
-    font-size: 14px;
-    line-height: 1.55;
-    color: #e8eef5;
-}
-.rain-fcst-warn-title {
-    font-weight: 700;
-    margin-bottom: 8px;
-    color: #f5e6a8;
-}
-.rain-fcst-warn-tech {
-    font-size: 12px;
-    color: #9fb3c8;
-    margin: 0;
-}
-
-</style>
-""", unsafe_allow_html=True)
+_app_css_path = Path(__file__).resolve().parent / "styles" / "app.css"
+if _app_css_path.exists():
+    st.markdown(
+        f"<style>{_app_css_path.read_text(encoding='utf-8')}</style>",
+        unsafe_allow_html=True,
+    )
+else:
+    st.warning(
+        "앱 스타일 파일이 없습니다: `scripts/app/styles/app.css`",
+        icon="⚠️",
+    )
 
 # =========================
 # 사이드바
@@ -1164,48 +1010,11 @@ congestion = (
 # =========================
 # 운영 단계
 # =========================
-if congestion < 50:
-
-    level = "LOW"
-
-    action_class = "action-low"
-
-    action_title = "🟢 [비용 절감 모드]"
-
-    action_msg = (
-        "식자재 발주를 평소 대비 축소하고, "
-        "일부 구역 매점 운영을 최소화하여 "
-        "인력을 효율적으로 운용하세요."
-    )
-
-elif congestion < 80:
-
-    level = "NORMAL"
-
-    action_class = "action-mid"
-
-    action_title = "🟡 [일반 운영 모드]"
-
-    action_msg = (
-        "기본 매뉴얼에 따라 운영을 준비하세요. "
-        "입장 동선과 매점 운영 상태를 "
-        "사전에 점검하세요."
-    )
-
-else:
-
-    level = "HIGH"
-
-    action_class = "action-high"
-
-    action_title = "🔴 [안전 강화 모드]"
-
-    action_msg = (
-        "게이트 주변 안전 요원을 "
-        "20% 추가 배치하고, "
-        "매점 재고 소진에 대비해 "
-        "발주량을 최대로 늘리세요."
-    )
+_plan = classify_congestion_pct(congestion)
+level = _plan.level
+action_class = _plan.action_class
+action_title = _plan.action_title
+action_msg = _plan.action_msg
 
 # =========================
 # 메인 화면
@@ -1231,11 +1040,11 @@ st.markdown("## 📅 경기 정보")
 
 st.markdown(
     f'<div class="match-text">'
-    f'{game_date} | '
-    f'{home_team} vs {away_team} | '
-    f'{stadium}'
+    f'{html.escape(str(game_date))} | '
+    f'{html.escape(str(home_team))} vs {html.escape(str(away_team))} | '
+    f'{html.escape(str(stadium))}'
     f'</div>',
-    unsafe_allow_html=True
+    unsafe_allow_html=True,
 )
 
 # =========================
@@ -1370,20 +1179,24 @@ if not _ref.get("ok"):
 elif _ref.get("mode") == "ultra_rn1":
     mm = float(_ref["mm_h"])
     _t, _b, _css = kv.rule_band_from_mm_h(mm)
+    _te = html.escape(str(_t))
+    _be = html.escape(str(_b))
     st.markdown(
         f'<div class="rain-risk-box rain-risk-{_css}">'
         f'<div class="rain-risk-title">초단기예보 RN1 ≈ {mm:g} mm/h (1시간 강수)</div>'
-        f"<p style=\"margin:0;\"><b>{_t}</b> — {_b}</p>"
+        f'<p style="margin:0;"><b>{_te}</b> — {_be}</p>'
         "</div>",
         unsafe_allow_html=True,
     )
 elif _ref.get("mode") == "vilage_pop":
     pop = float(_ref["pop_pct"])
     _t, _b, _css = kv.rule_band_from_pop(pop)
+    _te = html.escape(str(_t))
+    _be = html.escape(str(_b))
     st.markdown(
         f'<div class="rain-risk-box rain-risk-{_css}">'
         f'<div class="rain-risk-title">단기예보 강수확률 POP ≈ {pop:.0f}%</div>'
-        f"<p style=\"margin:0;\"><b>{_t}</b> — {_b}</p>"
+        f'<p style="margin:0;"><b>{_te}</b> — {_be}</p>'
         "</div>",
         unsafe_allow_html=True,
     )
@@ -1479,12 +1292,12 @@ with col3:
 st.markdown("## 🛡 상황별 액션 플랜")
 
 st.markdown(f"""
-<div class="{action_class}">
+<div class="{html.escape(action_class)}">
 
-<h2>{action_title}</h2>
+<h2>{html.escape(action_title)}</h2>
 
 <p style="font-size:18px; line-height:1.7;">
-{action_msg}
+{html.escape(action_msg)}
 </p>
 
 </div>

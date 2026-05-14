@@ -1,0 +1,171 @@
+.stApp {
+    background-color: #07111f;
+    color: white;
+}
+
+[data-testid="stSidebar"] {
+    background-color: #0b1726;
+    border-right: 1px solid #24384f;
+}
+
+.main-title {
+    font-size: 32px;
+    font-weight: 900;
+    color: white;
+    margin-bottom: 8px;
+}
+
+.sub-text {
+    color: #9fb3c8;
+    font-size: 15px;
+}
+
+.match-text {
+    color: white;
+    font-size: 18px;
+    margin-top: 18px;
+    margin-bottom: 18px;
+}
+
+.predict-box {
+    border: 1px dashed #18e6ff;
+    border-radius: 14px;
+    padding: 45px;
+    text-align: center;
+    margin-top: 20px;
+    margin-bottom: 25px;
+    background-color: #081525;
+}
+
+.predict-label {
+    color: white;
+    font-size: 18px;
+    margin-bottom: 10px;
+}
+
+.predict-number {
+    color: #18e6ff;
+    font-size: 62px;
+    font-weight: 900;
+}
+
+.card {
+    background-color: #101d2d;
+    border: 1px solid #263f5c;
+    border-radius: 15px;
+    padding: 25px;
+    text-align: center;
+}
+
+.card-title {
+    color: #b8c7d9;
+    font-size: 17px;
+    margin-bottom: 10px;
+}
+
+.card-value {
+    color: white;
+    font-size: 34px;
+    font-weight: 800;
+}
+
+.card-high {
+    color: #ff4b5c;
+    font-size: 38px;
+    font-weight: 900;
+}
+
+.action-low {
+    background-color: #0f3425;
+    border: 1px solid #2ecc71;
+    border-radius: 15px;
+    padding: 25px;
+    color: white;
+}
+
+.action-mid {
+    background-color: #3c3414;
+    border: 1px solid #f1c40f;
+    border-radius: 15px;
+    padding: 25px;
+    color: white;
+}
+
+.action-high {
+    background-color: #3b1116;
+    border: 1px solid #ff4b5c;
+    border-radius: 15px;
+    padding: 25px;
+    color: white;
+}
+
+.disclaimer-under-predict {
+    background-color: #101d2d;
+    border: 1px solid #2a4a6f;
+    border-radius: 12px;
+    padding: 16px 18px;
+    margin: 16px 0 20px 0;
+    font-size: 13px;
+    line-height: 1.65;
+    color: #c5d8ec;
+}
+.disclaimer-under-predict b {
+    color: #e8f0f8;
+}
+.disclaimer-under-predict code {
+    font-size: 12px;
+    color: #b8d4f0;
+}
+
+.rain-risk-box {
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin-top: 14px;
+    margin-bottom: 8px;
+    font-size: 14px;
+    line-height: 1.55;
+    color: #e8eef5;
+}
+
+.rain-risk-title {
+    font-weight: 700;
+    margin-bottom: 6px;
+    color: #e8eef5;
+}
+
+.rain-risk-low {
+    border: 1px solid #2ecc71;
+    background: rgba(46, 204, 113, 0.09);
+}
+
+.rain-risk-mid {
+    border: 1px solid #f39c12;
+    background: rgba(243, 156, 18, 0.12);
+}
+
+.rain-risk-high {
+    border: 1px solid #e74c3c;
+    background: rgba(231, 76, 60, 0.11);
+}
+
+.rain-fcst-warn {
+    border: 1px solid #c9a227;
+    background: rgba(201, 162, 39, 0.14);
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin-top: 14px;
+    margin-bottom: 8px;
+    font-size: 14px;
+    line-height: 1.55;
+    color: #e8eef5;
+}
+.rain-fcst-warn-title {
+    font-weight: 700;
+    margin-bottom: 8px;
+    color: #f5e6a8;
+}
+.rain-fcst-warn-tech {
+    font-size: 12px;
+    color: #9fb3c8;
+    margin: 0;
+}
