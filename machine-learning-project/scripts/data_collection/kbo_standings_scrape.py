@@ -65,13 +65,19 @@ def _dates_from_raw_csv(path: Path, season_year: int) -> list[date]:
     return dates
 
 
-def _parse_standings_table(soup: BeautifulSoup) -> list[list[str]]:
+def _parse_standings_table(soup: BeautifulSoup) -> tuple[list[list[str]], list[str]]:
     tbl = soup.find("table", class_="tData")
     if not tbl:
-        return []
+        return [], []
+    thead = tbl.find("thead")
+    headers: list[str] = []
+    if thead:
+        tr = thead.find("tr")
+        if tr:
+            headers = [th.get_text(strip=True) for th in tr.find_all("th")]
     tbody = tbl.find("tbody")
     if not tbody:
-        return []
+        return [], headers
     rows: list[list[str]] = []
     for tr in tbody.find_all("tr"):
         tds = [td.get_text(strip=True) for td in tr.find_all("td")]
@@ -81,7 +87,7 @@ def _parse_standings_table(soup: BeautifulSoup) -> list[list[str]]:
             continue
         if len(tds) >= 12:
             rows.append(tds)
-    return rows
+    return rows, headers
 
 
 def fetch_standings_for_date(
@@ -89,9 +95,9 @@ def fetch_standings_for_date(
     *,
     season_year: int,
     target: date,
-) -> tuple[list[list[str]], str]:
+) -> tuple[list[list[str]], str, list[str]]:
     """
-    Returns (table_rows, headline_snippet).
+    Returns (table_rows, headline_snippet, thead_header_labels).
     Each row: 순위, 팀명, 경기, 승, 패, 무, 승률, 게임차, 최근10, 연속, 홈, 방문
     """
     r = session.get(RANK_URL, headers=HEADERS, timeout=30)
@@ -131,7 +137,8 @@ def fetch_standings_for_date(
             headline = s.strip()
             break
 
-    return _parse_standings_table(soup2), headline
+    tbl_rows, thead_headers = _parse_standings_table(soup2)
+    return tbl_rows, headline, thead_headers
 
 
 def _snapshot_date_from_headline(headline: str) -> str | None:
@@ -148,33 +155,77 @@ def _snapshot_date_from_headline(headline: str) -> str | None:
         return None
 
 
+def _zip_standings_header_row(headers: list[str], cells: list[str]) -> dict[str, str]:
+    """thead 열 이름에 맞춰 td 셀을 dict로 정렬(선행 순번 열 1칸 생략 등)."""
+    h = [str(x).strip() for x in headers if str(x).strip()]
+    c = list(cells)
+    if h and len(c) == len(h) + 1:
+        c = c[1:]
+    while len(c) < len(h):
+        c.append("")
+    return {name: val.strip() for name, val in zip(h, c[: len(h)])}
+
+
+def _cell_from_header_or_index(
+    mapped: dict[str, str] | None,
+    tds: list[str],
+    header_keys: tuple[str, ...],
+    index: int,
+) -> str:
+    if mapped:
+        for k in header_keys:
+            v = mapped.get(k)
+            if v is not None and str(v).strip():
+                return str(v).strip()
+    if index < len(tds):
+        return str(tds[index]).strip()
+    return ""
+
+
 def rows_to_records(
     기준일: str,
     시즌연도: int,
     rows: list[list[str]],
     headline: str,
+    table_headers: list[str] | None = None,
 ) -> list[dict]:
     스냅샷일 = _snapshot_date_from_headline(headline)
     recs: list[dict] = []
+    thead_ok = bool(table_headers and any(str(x).strip() for x in (table_headers or [])))
     for tds in rows:
+        m = _zip_standings_header_row(table_headers, tds) if thead_ok else None
+
+        s_rank = _cell_from_header_or_index(m, tds, ("순위",), 0)
+        s_team = _cell_from_header_or_index(m, tds, ("팀명", "팀"), 1)
+        s_games = _cell_from_header_or_index(m, tds, ("경기",), 2)
+        s_w = _cell_from_header_or_index(m, tds, ("승",), 3)
+        s_l = _cell_from_header_or_index(m, tds, ("패",), 4)
+        s_d = _cell_from_header_or_index(m, tds, ("무",), 5)
+        s_pct = _cell_from_header_or_index(m, tds, ("승률",), 6)
+        s_gb = _cell_from_header_or_index(m, tds, ("게임차",), 7)
+        s_l10 = _cell_from_header_or_index(m, tds, ("최근10경기", "최근10"), 8)
+        s_strk = _cell_from_header_or_index(m, tds, ("연속",), 9)
+        s_home = _cell_from_header_or_index(m, tds, ("홈", "홈성적"), 10)
+        s_road = _cell_from_header_or_index(m, tds, ("방문", "방문성적", "원정", "원정성적"), 11)
+
         recs.append(
             {
                 "기준일": 기준일,
                 "기록실_스냅샷일": 스냅샷일 or "",
                 "시즌연도": 시즌연도,
                 "시리즈": "정규시즌",
-                "순위": int(tds[0]) if tds[0].isdigit() else tds[0],
-                "팀명": tds[1],
-                "경기": int(tds[2]) if tds[2].isdigit() else pd.NA,
-                "승": int(tds[3]) if tds[3].isdigit() else pd.NA,
-                "패": int(tds[4]) if tds[4].isdigit() else pd.NA,
-                "무": int(tds[5]) if tds[5].isdigit() else pd.NA,
-                "승률": float(tds[6]) if _float_ok(tds[6]) else pd.NA,
-                "게임차": float(tds[7]) if _float_ok(tds[7]) else pd.NA,
-                "최근10경기": tds[8],
-                "연속": tds[9],
-                "홈성적": tds[10],
-                "방문성적": tds[11],
+                "순위": int(s_rank) if s_rank.isdigit() else s_rank,
+                "팀명": s_team,
+                "경기": int(s_games) if s_games.isdigit() else pd.NA,
+                "승": int(s_w) if s_w.isdigit() else pd.NA,
+                "패": int(s_l) if s_l.isdigit() else pd.NA,
+                "무": int(s_d) if s_d.isdigit() else pd.NA,
+                "승률": float(s_pct) if _float_ok(s_pct) else pd.NA,
+                "게임차": float(s_gb) if _float_ok(s_gb) else pd.NA,
+                "최근10경기": s_l10,
+                "연속": s_strk,
+                "홈성적": s_home,
+                "방문성적": s_road,
             }
         )
     return recs
@@ -258,19 +309,30 @@ def main() -> None:
         if key in existing:
             print(f"[{i}/{len(dates)}] skip {d} (already in output)", flush=True)
             continue
+        rows: list[list[str]] = []
+        hl = ""
+        thead_h: list[str] = []
         try:
-            rows, hl = fetch_standings_for_date(session, season_year=year, target=d)
+            rows, hl, thead_h = fetch_standings_for_date(session, season_year=year, target=d)
         except Exception as e:
-            print(f"[{i}/{len(dates)}] ERROR {d}: {e}", file=sys.stderr, flush=True)
-            time.sleep(args.sleep)
-            continue
+            print(
+                f"[{i}/{len(dates)}] WARN {d}: 요청 실패, Session 재생성 후 1회 재시도: {e}",
+                flush=True,
+            )
+            session = requests.Session()
+            try:
+                rows, hl, thead_h = fetch_standings_for_date(session, season_year=year, target=d)
+            except Exception as e2:
+                print(f"[{i}/{len(dates)}] ERROR {d}: {e2}", file=sys.stderr, flush=True)
+                time.sleep(args.sleep)
+                continue
 
         if not rows:
             print(f"[{i}/{len(dates)}] {d}: 표 비어 있음 — 스킵", flush=True)
             time.sleep(args.sleep)
             continue
 
-        recs = rows_to_records(d.isoformat(), year, rows, hl)
+        recs = rows_to_records(d.isoformat(), year, rows, hl, thead_h)
         for r in recs:
             r["페이지기준문구"] = hl
         all_recs.extend(recs)
