@@ -232,11 +232,12 @@ def _recent_five_kbo(stadium: str, before_iso: str) -> pd.DataFrame:
             headless=headless,
         )
         return out if out is not None else pd.DataFrame()
-    except Exception:
+    except Exception as e:
         logger.warning(
-            "KBO 최근 경기 스크랩 실패 (stadium=%s, before=%s)",
+            "KBO 최근 경기 스크랩 실패 (stadium=%s, before=%s): %s",
             stadium,
             before_iso,
+            e,
             exc_info=True,
         )
         return pd.DataFrame()
@@ -1055,9 +1056,10 @@ if use_rf_model and _rf_artifacts_ok:
                 float(humidity),
             )
 
-        except Exception:
+        except Exception as e:
 
-            logger.warning("RF 파이프라인 예측 실패, 휴리스틱 유지", exc_info=True)
+            logger.warning("RF 파이프라인 예측 실패, 휴리스틱 유지: %s", e, exc_info=True)
+            st.caption("모델 예측에 실패해 **과거 패턴 기반 추정(휴리스틱)** 값을 표시합니다.")
 
 if ml_used:
 
