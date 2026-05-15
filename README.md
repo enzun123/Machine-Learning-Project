@@ -2,11 +2,19 @@
 
 > KBO 경기별 관중 수를 머신러닝으로 예측하는 엔드투엔드 파이프라인 + Streamlit 웹앱
 
+**현재 브랜치:** `feat/build-features-refactor` — `build_features.py` 단계 분리·`PRIOR_ATTENDANCE_FORM_COLS` 정리
+
 ---
 
 ## 📌 프로젝트 개요
 
-경기 일정, 구장 정보, 기상 데이터, 팀 순위를 결합해 **RandomForest 기반 회귀 모델**로 KBO 경기의 관중 수를 예측합니다. 수집 → 전처리 → 피처 생성 → 학습 → 추론까지 전 과정을 자동화하며, **Streamlit UI**를 통해 손쉽게 인터랙티브하게 예측 결과를 확인할 수 있습니다.
+경기 일정, 구장 정보, 기상 데이터, 팀 순위를 결합해 **RandomForest 기반 회귀 모델**로 KBO 경기의 관중 수를 예측합니다. 이 브랜치는 **`final_dataset.csv` → `kbo_train_ready.csv`** 피처 생성 로직을 모듈화·정리합니다.
+
+**이 브랜치에서 추가·정리한 내용**
+- `create_features_pro()`를 단계별 함수로 분리 (용량·기상·요일·순위·폼)
+- `PRIOR_ATTENDANCE_FORM_COLS` — 시점 이전 관중·폼·매치업·시즌 진행도 컬럼 목록 명확화
+- `MODEL_READY_COLUMNS` — 학습용 최종 컬럼 스키마 고정
+- 누수 방지: `add_season_form_and_draw_proxy()`는 **해당 경기 이전** 정보만 사용
 
 ---
 
@@ -15,50 +23,42 @@
 ```
 Machine-Learning-Project/
 ├── README.md
-├── .gitignore
 └── machine-learning-project/
     ├── data/
-    │   ├── raw/               # 연도별 일별 관중 원시 데이터
-    │   ├── interim/           # 관중 + 기상 병합 중간 데이터
-    │   ├── processed/         # final_dataset, kbo_train_ready (학습용 최종 테이블)
-    │   └── external/          # 구장 정원, 일별 순위, 기상 캐시 등
-    ├── models/                # 학습된 파이프라인(.joblib), 리포트, 튜닝 결과
-    ├── reports/eda/           # EDA 산출물 (figures, eda_summary.md)
+    │   ├── processed/
+    │   │   ├── final_dataset.csv      # 입력
+    │   │   └── kbo_train_ready.csv    # ★ 출력 (이 브랜치 핵심)
+    │   └── external/
+    │       ├── kbo_stadium_info.csv
+    │       └── kbo_standings_daily.csv
+    ├── models/
     └── scripts/
-        ├── app/
-        │   └── streamlit_app.py          # 웹 UI
-        ├── common/
-        │   └── stadium_aliases.py        # 구장 이름 별칭 공통 모듈
-        ├── data_collection/              # 크롤링 · 기상 · 최근 N경기 수집
-        ├── preprocessing/               # 전처리 병합
         ├── features/
-        │   └── build_features.py        # 피처 생성
-        ├── modeling/                    # 학습 · 평가 · 예측 · 튜닝
-        └── eda/
-            └── run_eda.py               # EDA 리포트 생성
+        │   └── build_features.py      # ★ 피처 엔지니어링
+        ├── common/
+        │   └── stadium_aliases.py
+        ├── preprocessing/
+        ├── modeling/
+        ├── data_collection/
+        └── app/
+            └── streamlit_app.py
 ```
 
 ---
 
-## 🔄 데이터 파이프라인
+## 🔄 데이터 파이프라인 (피처 구간)
 
 ```
-[kbo_scraping.py]         →  data/raw/kbo_{연도}_attendance.csv
-[kbo_standings_scrape.py] →  data/external/kbo_standings_daily.csv
-[kbo_size.py]             →  data/external/kbo_stadium_info.csv
+[preprocess_attendance_weather.py] → final_dataset.csv
         ↓
-[weather_api.py]          →  data/interim/kbo_*_attendance_weather.csv
+[build_features.py]  create_features_pro()
         ↓
-[preprocess_attendance_weather.py] → data/processed/final_dataset.csv
+kbo_train_ready.csv  (MODEL_READY_COLUMNS)
         ↓
-[build_features.py]       →  data/processed/kbo_train_ready.csv
-        ↓
-[train_model.py]          →  models/attendance_rf_pipeline.joblib
-        ↓
-[evaluate_model.py]       →  models/eval_report.json
-        ↓
-[streamlit_app.py]        →  🌐 웹 UI에서 실시간 예측
+[train_model.py]     → attendance_rf_pipeline.joblib
 ```
+
+**선행 데이터:** 원시·기상·순위 수집이 끝난 `final_dataset.csv`, `kbo_stadium_info.csv`, `kbo_standings_daily.csv`
 
 ---
 
@@ -71,118 +71,99 @@ pip install pandas numpy requests beautifulsoup4 selenium webdriver-manager \
             scikit-learn joblib matplotlib seaborn streamlit optuna lightgbm
 ```
 
-### 권장 실행 순서
+### 피처 생성 (이 브랜치 핵심)
 
 ```bash
 cd machine-learning-project
 
-# 1) 원시 데이터 수집 (Selenium + Chrome 필요)
-python3 scripts/data_collection/kbo_scraping.py
-python3 scripts/data_collection/kbo_standings_scrape.py
-
-# 2) 구장 수용 인원 CSV 생성
-python3 scripts/data_collection/kbo_size.py
-
-# 3) 기상 데이터 병합 → interim
-python3 scripts/data_collection/weather_api.py
-
-# 4) interim → final_dataset
+# 선행: 전처리까지 완료된 상태
 python3 scripts/preprocessing/preprocess_attendance_weather.py
 
-# 5) 피처 생성 → kbo_train_ready
+# 피처 생성
 python3 scripts/features/build_features.py
-
-# 6) (선택) EDA 리포트 생성
-python3 scripts/eda/run_eda.py
-
-# 7) 모델 학습
-python3 scripts/modeling/train_model.py
-
-# 8) (선택) 평가 / 하이퍼파라미터 튜닝
-python3 scripts/modeling/evaluate_model.py
-python3 scripts/modeling/tune_hyperparams.py --n-trials 50
 ```
 
-> 💡 원시 CSV가 이미 있는 경우 1)~3) 단계를 건너뛰고 `interim` 또는 `processed` 단계부터 시작할 수 있습니다.
+**입력**
+- `data/processed/final_dataset.csv` (필수 컬럼: `연도`, `월`, `주차_ISO`, `홈팀`, `방문팀`, `구장`, `요일`, `경기날짜`, 기상 4종, `관중수`)
+- `data/external/kbo_stadium_info.csv` (수용 인원)
+- `data/external/kbo_standings_daily.csv` (승률·순위, 없으면 승률 0.5 대체)
 
-### Streamlit 웹앱 실행
+**출력**
+- `data/processed/kbo_train_ready.csv`
+
+### 학습·앱
 
 ```bash
-cd machine-learning-project
+python3 scripts/modeling/train_model.py
+export KMA_APIHUB_AUTH_KEY="발급받은_키"
 streamlit run scripts/app/streamlit_app.py
 ```
 
-> 웹앱 실행 전에 반드시 `train_model.py`로 모델을 먼저 학습해 두세요.  
-> 앱은 `kbo_2025_attendance_weather.csv` 파일을 `scripts/app/` 또는 `data/` 경로에서 자동 탐색합니다.
+---
+
+## 🧩 `create_features_pro()` 단계
+
+| 순서 | 함수 | 내용 |
+|------|------|------|
+| 1 | `_prepare_main_frame` | 구장 별칭, 숫자형 변환 |
+| 2 | `_add_stadium_capacity_and_clip` | `stadium_capacity`, 관중수 정원 105% 클리핑 |
+| 3 | `_add_weather_and_buckets` | 강수·기온·습도·풍 버킷, `is_rain`, `is_hot` |
+| 4 | `_add_weekday_derby_and_size` | 요일 sin/cos, 더비, 소규모 구장 |
+| 5 | `_add_calendar_standings_and_playoff` | 시즌 오프너·어린이날, 순위·페넌트·플레이오프 긴급도 |
+| 6 | `add_season_form_and_draw_proxy` | `PRIOR_ATTENDANCE_FORM_COLS` (누수 없음) |
 
 ---
 
-## 🖥️ Streamlit UI 기능
+## 📊 생성 피처 요약
 
-| 기능 | 설명 |
-|------|------|
-| 사이드바 입력 | 경기 날짜, 홈·원정팀, 구장 선택 |
-| 기상 슬라이더 | 기온, 강수량 등 기상 조건 조정 |
-| KBO 자동 반영 | 최근 경기 관중 데이터 자동 업데이트 옵션 |
-| 모델 선택 | RandomForest 파이프라인 사용 여부 토글 |
-| 예측 시각화 | 예측 결과 및 관련 통계 차트 제공 |
+| 구분 | 컬럼 예 |
+|------|---------|
+| 구장·용량 | `stadium_capacity`, `is_capacity_missing`, `is_small_stadium` |
+| 기상 | `rain_bucket`, `temp_bucket`, `humidity_bucket`, `wind_bucket`, `stadium_x_rain` |
+| 요일 | `is_weekend`, `is_friday`/`saturday`/`sunday`, `weekday_sin`/`cos` |
+| 순위·시즌 | `home_win_rate`, `visitor_win_rate`, `home_gb_to_5th`, `is_pennant_race`, `playoff_urgency` |
+| 이력·폼 (`PRIOR_ATTENDANCE_FORM_COLS`) | `home_prior_mean_att`, `home_last5_mean_att`, `matchup_prior_mean_att`, `season_progress` 등 |
+| 이벤트 | `is_derby`, `is_season_opener`, `is_childrens_day` |
+| 타겟 | `관중수` |
 
----
-
-## 📊 주요 스크립트
-
-| 스크립트 | 역할 |
-|----------|------|
-| `data_collection/kbo_scraping.py` | 일별 관중·경기 메타 크롤링 |
-| `data_collection/kbo_standings_scrape.py` | 일자별 팀 순위·승률 스냅샷 수집 |
-| `data_collection/kbo_size.py` | 구단·구장별 최대 수용 인원 CSV 생성 |
-| `data_collection/weather_api.py` | 기상청 API 연동 → interim CSV 생성 |
-| `data_collection/fetch_recent_crowd.py` | 구장별 최근 N경기 관중 추출 |
-| `preprocessing/preprocess_attendance_weather.py` | interim 병합 → `final_dataset.csv` |
-| `features/build_features.py` | 학습용 피처 생성 → `kbo_train_ready.csv` |
-| `modeling/train_model.py` | 시간 순 홀드아웃 검증 + RF 파이프라인 학습 |
-| `modeling/evaluate_model.py` | 테스트 구간 재평가 및 리포트 저장 |
-| `modeling/predict.py` | 저장된 모델로 배치 예측 |
-| `modeling/tune_hyperparams.py` | Optuna + TimeSeriesSplit 하이퍼파라미터 튜닝 |
-| `eda/run_eda.py` | 탐색적 데이터 분석 리포트 생성 |
-| `app/streamlit_app.py` | 관람 수요 예측 웹앱 |
-| `common/stadium_aliases.py` | 구장 이름 별칭 공통 정의 |
+`train_model.py`의 `NUMERIC_FEATURES` / `CATEGORICAL_FEATURES`는 위 스키마와 맞춰져 있습니다.
 
 ---
 
 ## ⚙️ 모델 정보
 
-- **알고리즘**: RandomForest Regressor (scikit-learn Pipeline)
-- **검증 방식**: 시간 순 홀드아웃 (Time-based holdout)
-- **튜닝**: Optuna + TimeSeriesSplit (선택 사항)
-- **저장 포맷**: `models/attendance_rf_pipeline.joblib`
-- **선택 모델**: LightGBM (`train_model.py` 내 선택적 사용)
+- **알고리즘**: RandomForest Regressor (`log1p` 타겟)
+- **검증**: `연도`·`월`·`주차_ISO` 시간 순 홀드아웃
+
+| 지표 | Dummy | 구장 평균 | RandomForest |
+|------|-------|-----------|--------------|
+| MAE | ~4,673 | ~3,827 | **~1,943** |
+| R² | ~-0.03 | ~0.37 | **~0.73** |
 
 ---
 
-## 🔑 기상 API 설정
+## 🔑 API·키
 
-기상청 API 인증키는 현재 **`scripts/data_collection/weather_api.py` 상단 변수**로만 설정되어 있습니다.  
-저장소에 키를 커밋하지 않으려면 로컬에서만 수정하거나, 추후 `os.environ` 등으로 분리하는 편이 안전합니다.
+| 용도 | 설정 |
+|------|------|
+| 배치 기상(typ01) | `weather_api.py`의 `AUTH_KEY` (로컬만, 커밋 금지) |
+| Streamlit 동네예보(typ02) | `KMA_APIHUB_AUTH_KEY` |
 
 ---
 
-## 🌿 Git 브랜치 전략
+## 🌿 Git 브랜치
 
 | 브랜치 | 용도 |
 |--------|------|
-| `main` | 배포용 안정 버전 |
-| `develop` | 기능 통합 브랜치 |
-| `feat/*` / `feature/*` | 기능별 개발 브랜치 |
-
----
-
-## 📝 라이선스
-
-저장소 정책에 맞게 `LICENSE` 파일을 추가하세요.
+| `feat/build-features-refactor` | **현재** — 피처 파이프라인 리팩터 |
+| `feat/kbo-scraping-and-standings` | 관중·순위 수집 |
+| `feat/weather-kma-refactor` | KMA env 통일 |
+| `feat/pkg-layout-and-config` | pyproject·config·logging |
+| `develop` | 기능 통합 |
 
 ---
 
 ## 🙋 문의
-팀장:허은준
-연락처:enzun123@gmail.com
+
+- 팀장: 허은준
+- 연락처: enzun123@gmail.com
