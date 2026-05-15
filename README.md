@@ -2,40 +2,36 @@
 
 > KBO 경기별 관중 수를 머신러닝으로 예측하는 엔드투엔드 파이프라인 + Streamlit 웹앱
 
+**현재 브랜치:** `feat/security-api-and-exceptions` — API 키 환경변수화·예외 처리·RF 폴백 안내
+
 ---
 
 ## 📌 프로젝트 개요
 
-경기 일정, 구장 정보, 기상 데이터, 팀 순위를 결합해 **RandomForest 기반 회귀 모델**로 KBO 경기의 관중 수를 예측합니다. 수집 → 전처리 → 피처 생성 → 학습 → 추론까지 전 과정을 자동화하며, **Streamlit UI**를 통해 손쉽게 인터랙티브하게 예측 결과를 확인할 수 있습니다.
+경기 일정, 구장 정보, 기상 데이터, 팀 순위를 결합해 **RandomForest**로 KBO 관중 수를 예측합니다. 이 브랜치는 **보안(키 노출 방지)** 과 **실패 시 동작·사용자 안내**를 정리합니다.
+
+**이 브랜치에서 추가·정리한 내용**
+- **API 키**: typ01(`weather_api.py`)·typ02(`kma_vilage_fcst.py`) 모두 `KMA_APIHUB_AUTH_KEY` 환경변수만 사용 (코드에 키 하드코딩 제거)
+- **기상 배치**: 키 없으면 조기 종료·요청 건너뜀; `requests.RequestException` 시 빈 결과로 계속
+- **캐시**: `weather_cache.json` 읽기 실패 시 `JSONDecodeError`/`OSError` 처리 후 재생성
+- **크롤링**: `NoSuchElementException` / `WebDriverException` 분리 처리
+- **동네예보**: `redact_api_secrets()` — 오류·URL의 `authKey`/`serviceKey` 마스킹
+- **Streamlit**: RF 예측 실패·산출물 없음 시 **휴리스틱 폴백** 메시지, API 오류 문자열 마스킹
 
 ---
 
-## 📁 저장소 구조
+## 📁 저장소 구조 (관련 파일)
 
 ```
-Machine-Learning-Project/
-├── README.md
-├── .gitignore
-└── machine-learning-project/
-    ├── data/
-    │   ├── raw/               # 연도별 일별 관중 원시 데이터
-    │   ├── interim/           # 관중 + 기상 병합 중간 데이터
-    │   ├── processed/         # final_dataset, kbo_train_ready (학습용 최종 테이블)
-    │   └── external/          # 구장 정원, 일별 순위, 기상 캐시 등
-    ├── models/                # 학습된 파이프라인(.joblib), 리포트, 튜닝 결과
-    ├── reports/eda/           # EDA 산출물 (figures, eda_summary.md)
-    └── scripts/
-        ├── app/
-        │   └── streamlit_app.py          # 웹 UI
-        ├── common/
-        │   └── stadium_aliases.py        # 구장 이름 별칭 공통 모듈
-        ├── data_collection/              # 크롤링 · 기상 · 최근 N경기 수집
-        ├── preprocessing/               # 전처리 병합
-        ├── features/
-        │   └── build_features.py        # 피처 생성
-        ├── modeling/                    # 학습 · 평가 · 예측 · 튜닝
-        └── eda/
-            └── run_eda.py               # EDA 리포트 생성
+machine-learning-project/
+└── scripts/
+    ├── data_collection/
+    │   ├── weather_api.py          # typ01 — KMA_APIHUB_AUTH_KEY
+    │   └── kbo_scraping.py         # Selenium 예외 분리
+    ├── common/
+    │   └── kma_vilage_fcst.py      # typ02 — redact_api_secrets
+    └── app/
+        └── streamlit_app.py        # RF 폴백·_redact_kma_secret_str
 ```
 
 ---
@@ -43,21 +39,15 @@ Machine-Learning-Project/
 ## 🔄 데이터 파이프라인
 
 ```
-[kbo_scraping.py]         →  data/raw/kbo_{연도}_attendance.csv
+[kbo_scraping.py]         →  data/raw/
 [kbo_standings_scrape.py] →  data/external/kbo_standings_daily.csv
 [kbo_size.py]             →  data/external/kbo_stadium_info.csv
         ↓
-[weather_api.py]          →  data/interim/kbo_*_attendance_weather.csv
+[weather_api.py]          →  data/interim/   ← KMA_APIHUB_AUTH_KEY 필수
         ↓
-[preprocess_attendance_weather.py] → data/processed/final_dataset.csv
+[preprocess → build_features → train_model]
         ↓
-[build_features.py]       →  data/processed/kbo_train_ready.csv
-        ↓
-[train_model.py]          →  models/attendance_rf_pipeline.joblib
-        ↓
-[evaluate_model.py]       →  models/eval_report.json
-        ↓
-[streamlit_app.py]        →  🌐 웹 UI에서 실시간 예측
+[streamlit_app.py]
 ```
 
 ---
@@ -71,118 +61,91 @@ pip install pandas numpy requests beautifulsoup4 selenium webdriver-manager \
             scikit-learn joblib matplotlib seaborn streamlit optuna lightgbm
 ```
 
-### 권장 실행 순서
+### API 키 설정 (필수)
 
 ```bash
-cd machine-learning-project
-
-# 1) 원시 데이터 수집 (Selenium + Chrome 필요)
-python3 scripts/data_collection/kbo_scraping.py
-python3 scripts/data_collection/kbo_standings_scrape.py
-
-# 2) 구장 수용 인원 CSV 생성
-python3 scripts/data_collection/kbo_size.py
-
-# 3) 기상 데이터 병합 → interim
-python3 scripts/data_collection/weather_api.py
-
-# 4) interim → final_dataset
-python3 scripts/preprocessing/preprocess_attendance_weather.py
-
-# 5) 피처 생성 → kbo_train_ready
-python3 scripts/features/build_features.py
-
-# 6) (선택) EDA 리포트 생성
-python3 scripts/eda/run_eda.py
-
-# 7) 모델 학습
-python3 scripts/modeling/train_model.py
-
-# 8) (선택) 평가 / 하이퍼파라미터 튜닝
-python3 scripts/modeling/evaluate_model.py
-python3 scripts/modeling/tune_hyperparams.py --n-trials 50
+export KMA_APIHUB_AUTH_KEY="발급받은_키"
 ```
 
-> 💡 원시 CSV가 이미 있는 경우 1)~3) 단계를 건너뛰고 `interim` 또는 `processed` 단계부터 시작할 수 있습니다.
+| 용도 | 모듈 |
+|------|------|
+| 일별 관측 typ01 | `weather_api.py` |
+| 동네예보 typ02 | `kma_vilage_fcst.py`, Streamlit |
 
-### Streamlit 웹앱 실행
+- 키가 **비어 있으면** `weather_api.py`는 에러 로그 후 **종료** (interim 미생성)
+- Streamlit은 secrets: `.streamlit/secrets.toml`의 `KMA_APIHUB_AUTH_KEY` 가능
+- **`.env`·키 문자열을 Git에 커밋하지 마세요**
+
+### 기상 병합
 
 ```bash
 cd machine-learning-project
+export KMA_APIHUB_AUTH_KEY="발급받은_키"
+python3 scripts/data_collection/weather_api.py
+```
+
+### Streamlit
+
+```bash
+export KMA_APIHUB_AUTH_KEY="발급받은_키"
 streamlit run scripts/app/streamlit_app.py
 ```
 
-> 웹앱 실행 전에 반드시 `train_model.py`로 모델을 먼저 학습해 두세요.  
-> 앱은 `kbo_2025_attendance_weather.csv` 파일을 `scripts/app/` 또는 `data/` 경로에서 자동 탐색합니다.
+**RF 사용 시 필요 파일**
+- `models/attendance_rf_pipeline.joblib`
+- `data/processed/kbo_train_ready.csv`
 
----
+없거나 예측 오류 시 앱은 **휴리스틱(과거 평균)** 으로 표시하고 화면에 안내합니다.
 
-## 🖥️ Streamlit UI 기능
-
-| 기능 | 설명 |
-|------|------|
-| 사이드바 입력 | 경기 날짜, 홈·원정팀, 구장 선택 |
-| 기상 슬라이더 | 기온, 강수량 등 기상 조건 조정 |
-| KBO 자동 반영 | 최근 경기 관중 데이터 자동 업데이트 옵션 |
-| 모델 선택 | RandomForest 파이프라인 사용 여부 토글 |
-| 예측 시각화 | 예측 결과 및 관련 통계 차트 제공 |
-
----
-
-## 📊 주요 스크립트
-
-| 스크립트 | 역할 |
+| 환경변수 | 설명 |
 |----------|------|
-| `data_collection/kbo_scraping.py` | 일별 관중·경기 메타 크롤링 |
-| `data_collection/kbo_standings_scrape.py` | 일자별 팀 순위·승률 스냅샷 수집 |
-| `data_collection/kbo_size.py` | 구단·구장별 최대 수용 인원 CSV 생성 |
-| `data_collection/weather_api.py` | 기상청 API 연동 → interim CSV 생성 |
-| `data_collection/fetch_recent_crowd.py` | 구장별 최근 N경기 관중 추출 |
-| `preprocessing/preprocess_attendance_weather.py` | interim 병합 → `final_dataset.csv` |
-| `features/build_features.py` | 학습용 피처 생성 → `kbo_train_ready.csv` |
-| `modeling/train_model.py` | 시간 순 홀드아웃 검증 + RF 파이프라인 학습 |
-| `modeling/evaluate_model.py` | 테스트 구간 재평가 및 리포트 저장 |
-| `modeling/predict.py` | 저장된 모델로 배치 예측 |
-| `modeling/tune_hyperparams.py` | Optuna + TimeSeriesSplit 하이퍼파라미터 튜닝 |
-| `eda/run_eda.py` | 탐색적 데이터 분석 리포트 생성 |
-| `app/streamlit_app.py` | 관람 수요 예측 웹앱 |
-| `common/stadium_aliases.py` | 구장 이름 별칭 공통 정의 |
+| `KMA_APIHUB_AUTH_KEY` | 기상청 API허브 (typ01·typ02) |
+| `STREAMLIT_WEB_RECENT=0` | 최근 5경기 자동 수집 끄기 |
+| `STREAMLIT_DEBUG_WEATHER=1` | 동네예보 디버그 패널 |
+| `KBO_SCRAPE_HEADLESS=0` | 크롤 시 브라우저 표시 |
+
+---
+
+## 🛡️ 예외·폴백 동작
+
+| 구간 | 동작 |
+|------|------|
+| `weather_api` 키 없음 | `main()` 조기 return, 로그에 env 이름 안내 |
+| `fetch_weather` HTTP 실패 | `RequestException` 로그 후 `{}` 반환 |
+| `weather_cache` 손상 | 경고 후 빈 캐시로 재수집 |
+| `kbo_scraping` 페이지 이동 | `NoSuchElementException` → 마지막 페이지; `WebDriverException` → 로그 후 중단 |
+| `kma_vilage_fcst` 오류 메시지 | `redact_api_secrets` 적용 |
+| Streamlit RF `predict` 실패 | 로그 + 캡션 «휴리스틱 유지» |
+| RF 체크 ON, 모델 파일 없음 | 캡션 «휴리스틱만» + 체크박스 도움말 |
+
+---
+
+## 🖥️ Streamlit (요약)
+
+- RandomForest / 휴리스틱, 동네예보·우천 참고, 피처 중요도(날씨 2그룹)
+- 사용자·API 텍스트는 `html.escape` / `_redact_kma_secret_str` 처리
 
 ---
 
 ## ⚙️ 모델 정보
 
-- **알고리즘**: RandomForest Regressor (scikit-learn Pipeline)
-- **검증 방식**: 시간 순 홀드아웃 (Time-based holdout)
-- **튜닝**: Optuna + TimeSeriesSplit (선택 사항)
-- **저장 포맷**: `models/attendance_rf_pipeline.joblib`
-- **선택 모델**: LightGBM (`train_model.py` 내 선택적 사용)
+- RandomForest, 시간 순 홀드아웃
+- 테스트 구간 참고: MAE **~1,943**, R² **~0.73**
 
 ---
 
-## 🔑 기상 API 설정
-
-기상청 API 인증키는 현재 **`scripts/data_collection/weather_api.py` 상단 변수**로만 설정되어 있습니다.  
-저장소에 키를 커밋하지 않으려면 로컬에서만 수정하거나, 추후 `os.environ` 등으로 분리하는 편이 안전합니다.
-
----
-
-## 🌿 Git 브랜치 전략
+## 🌿 Git 브랜치
 
 | 브랜치 | 용도 |
 |--------|------|
-| `main` | 배포용 안정 버전 |
-| `develop` | 기능 통합 브랜치 |
-| `feat/*` / `feature/*` | 기능별 개발 브랜치 |
-
----
-
-## 📝 라이선스
-
-저장소 정책에 맞게 `LICENSE` 파일을 추가하세요.
+| `feat/security-api-and-exceptions` | **현재** — API env·예외·RF 안내 |
+| `feat/weather-kma-refactor` | 동네예보 ref 단계 분리 |
+| `feat/streamlit-ux-and-safety` | CSS·session_state·혼잡도 모듈 |
+| `develop` | 기능 통합 |
 
 ---
 
 ## 🙋 문의
-팀장:허은준
-연락처:enzun123@gmail.com
+
+- 팀장: 허은준
+- 연락처: enzun123@gmail.com
