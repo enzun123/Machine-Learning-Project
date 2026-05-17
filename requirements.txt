@@ -1,4 +1,4 @@
-# Streamlit Cloud / pip install (pyproject.toml과 동일 계열)
+# Streamlit Cloud (앱이 machine-learning-project/ 하위일 때)
 streamlit>=1.28
 pandas>=2.0
 numpy>=1.24
@@ -12,3 +12,4 @@ selenium>=4.15
 webdriver-manager>=4.0
 optuna>=3.4
 lightgbm>=4.0
+-e ./machine-learning-project
