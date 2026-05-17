@@ -11,6 +11,9 @@
 *.sln.docstates
 *.env
 
+# Streamlit 앱에서 런타임 다운로드하는 한글 폰트
+machine-learning-project/scripts/app/assets/fonts/*.ttf
+
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs
 

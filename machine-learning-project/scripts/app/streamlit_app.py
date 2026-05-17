@@ -8,6 +8,12 @@ import re
 import sys
 from pathlib import Path
 
+# Streamlit Cloud: common.* 는 scripts/ 패키지 — third-party·common import 전에 path 등록
+_SCRIPTS = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = _SCRIPTS.parent
+if str(_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS))
+
 import joblib
 import matplotlib.font_manager as fm
 import matplotlib.pyplot as plt
@@ -15,12 +21,17 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+from common.congestion_levels import classify_congestion_pct
 from common.logging_config import setup_logging
 
 logger = logging.getLogger(__name__)
 setup_logging()
 
 _RE_KMA_QSECRET = re.compile(r"((?:authKey|serviceKey)=)([^&\s#'\"]+)", re.I)
+
+_NANUM_GOTHIC_URL = (
+    "https://github.com/google/fonts/raw/main/ofl/nanumgothic/NanumGothic-Regular.ttf"
+)
 
 
 def _redact_kma_secret_str(text: object) -> str:
@@ -30,24 +41,61 @@ def _redact_kma_secret_str(text: object) -> str:
     return _RE_KMA_QSECRET.sub(r"\1***", str(text))
 
 
-# =========================
-# 한글 폰트 (OS별 후보)
-# =========================
-_font_names = {f.name for f in fm.fontManager.ttflist}
-for _fam in (
-    "AppleGothic",
-    "Apple SD Gothic Neo",
-    "Malgun Gothic",
-    "NanumGothic",
-    "Noto Sans CJK KR",
-    "DejaVu Sans",
-):
-    if _fam in _font_names:
-        plt.rcParams["font.family"] = _fam
-        break
-else:
+def _is_streamlit_cloud() -> bool:
+    return os.environ.get("STREAMLIT_RUNTIME_ENVIRONMENT", "").strip().lower() == "cloud"
+
+
+def _default_web_recent_enabled() -> bool:
+    env = os.environ.get("STREAMLIT_WEB_RECENT")
+    if env is not None:
+        return env.strip() != "0"
+    if _is_streamlit_cloud():
+        return False
+    return True
+
+
+@st.cache_resource
+def _ensure_korean_matplotlib_font() -> str:
+    """Linux(Streamlit Cloud) 등에서 한글 깨짐 방지 — Nanum Gothic 등록."""
+    plt.rcParams["axes.unicode_minus"] = False
+    fonts_dir = Path(__file__).resolve().parent / "assets" / "fonts"
+    fonts_dir.mkdir(parents=True, exist_ok=True)
+    font_path = fonts_dir / "NanumGothic.ttf"
+
+    if not font_path.is_file():
+        try:
+            import urllib.request
+
+            urllib.request.urlretrieve(_NANUM_GOTHIC_URL, font_path)
+        except Exception as e:
+            logger.warning("Nanum Gothic 다운로드 실패: %s", e)
+
+    if font_path.is_file():
+        try:
+            fm.fontManager.addfont(str(font_path))
+            family = fm.FontProperties(fname=str(font_path)).get_name()
+            plt.rcParams["font.family"] = family
+            return family
+        except Exception as e:
+            logger.warning("Nanum Gothic 등록 실패: %s", e)
+
+    _font_names = {f.name for f in fm.fontManager.ttflist}
+    for _fam in (
+        "NanumGothic",
+        "Nanum Gothic",
+        "AppleGothic",
+        "Apple SD Gothic Neo",
+        "Malgun Gothic",
+        "Noto Sans CJK KR",
+        "Noto Sans KR",
+    ):
+        if _fam in _font_names:
+            plt.rcParams["font.family"] = _fam
+            return _fam
+
     plt.rcParams["font.family"] = "DejaVu Sans"
-plt.rcParams["axes.unicode_minus"] = False
+    return "DejaVu Sans"
+
 
 # =========================
 # 기본 설정
@@ -57,12 +105,7 @@ st.set_page_config(
     layout="wide",
 )
 
-_SCRIPTS = Path(__file__).resolve().parent.parent
-PROJECT_ROOT = _SCRIPTS.parent
-if str(_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS))
-
-from common.congestion_levels import classify_congestion_pct
+_ensure_korean_matplotlib_font()
 
 # =========================
 # 데이터 불러오기
@@ -719,10 +762,10 @@ away_team = st.sidebar.selectbox(
 
 auto_recent_kbo = st.sidebar.checkbox(
     "최근 5경기 KBO 자동 반영",
-    value=os.environ.get("STREAMLIT_WEB_RECENT", "1") != "0",
+    value=_default_web_recent_enabled(),
     help=(
         "선택한 경기 날짜 이전에 치른 직전 5경기를 GraphDaily에서 가져옵니다. "
-        "Chrome·Selenium 필요. 꺼두면 로컬 CSV만 사용합니다. "
+        "Chrome·Selenium 필요(Streamlit Cloud에서는 기본 꺼짐). 꺼두면 로컬 CSV만 사용합니다. "
         f"캐시 TTL {_KBO_RECENT_TTL}초."
     ),
 )
