@@ -346,8 +346,23 @@ def enrich_attendance_df(df: pd.DataFrame, year: int) -> pd.DataFrame:
     return out[cols]
 
 
-def scrape_kbo_attendance(years: list[int], *, headless: bool = True) -> dict[int, list]:
-    """연도별 행 목록. 각 행은 dict(헤더 매칭) 또는 list(구형 6열)."""
+def _system_chromium_paths() -> tuple[str | None, str | None]:
+    """apt chromium/chromium-driver (Streamlit Cloud). 없으면 None → webdriver-manager."""
+    candidates = (
+        (
+            os.environ.get("CHROMIUM_BIN", "/usr/bin/chromium"),
+            os.environ.get("CHROMEDRIVER_PATH", "/usr/bin/chromedriver"),
+        ),
+        ("/usr/bin/chromium", "/usr/bin/chromium-driver"),
+        ("/usr/bin/chromium", "/usr/lib/chromium/chromedriver"),
+    )
+    for chromium_bin, driver_bin in candidates:
+        if Path(chromium_bin).is_file() and Path(driver_bin).is_file():
+            return chromium_bin, driver_bin
+    return None, None
+
+
+def _create_chrome_driver(*, headless: bool = True) -> webdriver.Chrome:
     chrome_options = Options()
     if headless:
         chrome_options.add_argument("--headless=new")
@@ -360,8 +375,21 @@ def scrape_kbo_attendance(years: list[int], *, headless: bool = True) -> dict[in
         "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     )
 
-    service = Service(ChromeDriverManager().install())
-    driver = webdriver.Chrome(service=service, options=chrome_options)
+    chromium_bin, driver_bin = _system_chromium_paths()
+    if chromium_bin and driver_bin:
+        log.info("Selenium: system chromium=%s chromedriver=%s", chromium_bin, driver_bin)
+        chrome_options.binary_location = chromium_bin
+        service = Service(driver_bin)
+    else:
+        log.info("Selenium: ChromeDriverManager (local Chrome)")
+        service = Service(ChromeDriverManager().install())
+
+    return webdriver.Chrome(service=service, options=chrome_options)
+
+
+def scrape_kbo_attendance(years: list[int], *, headless: bool = True) -> dict[int, list]:
+    """연도별 행 목록. 각 행은 dict(헤더 매칭) 또는 list(구형 6열)."""
+    driver = _create_chrome_driver(headless=headless)
 
     url = "https://www.koreabaseball.com/Record/Crowd/GraphDaily.aspx"
     driver.get(url)
