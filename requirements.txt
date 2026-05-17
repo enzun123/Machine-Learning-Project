@@ -1,4 +1,5 @@
 # Streamlit Cloud / pip install (pyproject.toml과 동일 계열)
+-e ./machine-learning-project
 streamlit>=1.28
 pandas>=2.0
 numpy>=1.24
