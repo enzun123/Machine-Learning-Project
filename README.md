@@ -2,16 +2,31 @@
 
 > KBO 경기별 관중 수를 머신러닝으로 예측하는 엔드투엔드 파이프라인 + Streamlit 웹앱
 
+**🌐 데모 (Streamlit Cloud):** [kbo-ml-prediction.streamlit.app](https://kbo-ml-prediction.streamlit.app)
+
 ---
 
 ## 📌 프로젝트 개요
 
 경기 일정, 구장 정보, 기상 데이터, 팀 순위를 결합해 **RandomForest 기반 회귀 모델**로 KBO 경기의 관중 수를 예측합니다. 수집 → 전처리 → 피처 생성 → 학습 → 추론까지 전 과정을 자동화하며, **Streamlit UI**에서 관중 예측·혼잡도·운영 액션 플랜·동네예보(우천 참고)를 한 화면에서 확인할 수 있습니다.
 
-**develop 브랜치 주요 특징**
+**주요 특징 (`main` / `develop` 동기화 기준)**
 - `scripts/common/` 공통 모듈(설정·로깅·구장 별칭·동네예보·혼잡도 등)로 파이프라인·앱 로직 분리
 - 피처: 승률·페넌트·플레이오프 긴급도·매치업·최근 5경기 평균·시즌 진행률 등
-- 웹앱: RF 예측 + 휴리스틱 폴백, 피처 중요도, KBO 최근 5경기 자동 수집, 기상청 typ02 우천 참고
+- 웹앱: RF 예측 + 휴리스틱 폴백, 피처 중요도, KBO 최근 5경기 자동 수집(로컬), 기상청 typ02 우천 참고
+- Streamlit Cloud: 루트 `requirements.txt`·`packages.txt`로 배포, 한글 폰트·Chromium 드라이버 경로 대응
+
+### 📦 저장소에 포함된 데이터 (학습·앱 생략 가능)
+
+아래가 이미 커밋되어 있으면 **수집·학습 없이** Streamlit만 실행해도 됩니다.
+
+| 경로 | 설명 |
+|------|------|
+| `data/raw/kbo_*_attendance.csv` | 연도별 관중 원시 |
+| `data/interim/kbo_*_attendance_weather.csv` | 관중 + 기상 |
+| `data/processed/kbo_train_ready.csv` | 학습용 피처 테이블 |
+| `models/attendance_rf_pipeline.joblib` | 학습된 RF 파이프라인 |
+| `models/train_report.json`, `eval_report.json` | 학습·평가 리포트 |
 
 ---
 
@@ -21,6 +36,8 @@
 Machine-Learning-Project/
 ├── README.md
 ├── .gitignore
+├── requirements.txt              # Streamlit Cloud / 루트 pip (-e ./machine-learning-project)
+├── packages.txt                  # Cloud 시스템 패키지 (chromium, fonts-nanum 등)
 └── machine-learning-project/
     ├── pyproject.toml          # 의존성·패키지 설치 (pip install -e .)
     ├── data/
@@ -33,6 +50,7 @@ Machine-Learning-Project/
     └── scripts/
         ├── app/
         │   ├── streamlit_app.py
+        │   ├── assets/fonts/            # Nanum Gothic (Cloud 한글 차트)
         │   └── styles/app.css           # 웹앱 커스텀 스타일
         ├── common/
         │   ├── config.py                # 파이프라인 전역 상수
@@ -91,9 +109,15 @@ pip install pandas numpy requests beautifulsoup4 selenium webdriver-manager \
             scikit-learn joblib matplotlib seaborn streamlit optuna lightgbm
 ```
 
-- Python **3.10+**
-- 크롤링·최근 경기 자동 반영: **Chrome + Selenium**
+- Python **3.10+** (로컬 권장 **3.11~3.12** / Streamlit Cloud는 **3.12** 권장)
+- 크롤링·최근 경기 자동 반영: **Chrome + Selenium** (로컬)
 - 기상 API: 환경변수 **`KMA_APIHUB_AUTH_KEY`** (아래 [기상 API 설정](#-기상-api-설정) 참고)
+
+**루트에서 Cloud와 동일하게 설치하려면**
+
+```bash
+pip install -r requirements.txt
+```
 
 ### 권장 실행 순서
 
@@ -128,9 +152,9 @@ python3 scripts/modeling/evaluate_model.py
 python3 scripts/modeling/tune_hyperparams.py --n-trials 50
 ```
 
-> 💡 `data/raw/`, `data/interim/` CSV가 이미 있으면 해당 단계부터 시작할 수 있습니다.
+> 💡 위 [저장소에 포함된 데이터](#-저장소에-포함된-데이터-학습앱-생략-가능)가 있으면 해당 단계부터 시작하거나 앱만 실행하면 됩니다.
 
-### Streamlit 웹앱 실행
+### Streamlit 웹앱 실행 (로컬)
 
 ```bash
 cd machine-learning-project
@@ -144,13 +168,49 @@ streamlit run scripts/app/streamlit_app.py
 
 **선택 환경변수**
 
-| 변수 | 설명 |
-|------|------|
-| `KMA_APIHUB_AUTH_KEY` | 동네예보(typ02) 우천 참고·`weather_api.py` 관측(typ01) |
-| `STREAMLIT_WEB_RECENT=0` | KBO 최근 5경기 GraphDaily 자동 수집 끄기 (기본: 켜짐) |
-| `STREAMLIT_DEBUG_WEATHER=1` | 동네예보 API 디버그 패널 표시 |
+| 변수 | 설명 | 기본값 |
+|------|------|--------|
+| `KMA_APIHUB_AUTH_KEY` | 동네예보(typ02) 우천 참고·`weather_api.py` 관측(typ01) | (없음) |
+| `STREAMLIT_WEB_RECENT` | `0`이면 KBO GraphDaily 최근 5경기 자동 수집 **끔** | 로컬 **켜짐**, Cloud **꺼짐** |
+| `STREAMLIT_DEBUG_WEATHER` | `1`이면 동네예보 API 디버그 패널 | 꺼짐 |
 
-Streamlit secrets 사용 시: `.streamlit/secrets.toml`에 `KMA_APIHUB_AUTH_KEY` 설정 가능.
+- 로컬 secrets: `machine-learning-project/.streamlit/secrets.toml`에 `KMA_APIHUB_AUTH_KEY` 설정 가능.
+- Cloud secrets: 앱 설정 → Secrets에 동일 키 추가.
+
+---
+
+## ☁️ Streamlit Cloud 배포
+
+| 설정 항목 | 값 |
+|-----------|-----|
+| Repository | `enzun123/Machine-Learning-Project` |
+| Branch | `main` (또는 `develop` — 내용 동기화 시 동일) |
+| Main file path | `machine-learning-project/scripts/app/streamlit_app.py` |
+| Python | **3.12** 권장 |
+
+**루트 파일 (자동 인식)**
+
+- `requirements.txt` — `pip install -e ./machine-learning-project` 및 의존성
+- `packages.txt` — `fonts-nanum`, `chromium`, `chromium-driver` (한글·Selenium)
+
+**Secrets (권장)**
+
+```toml
+KMA_APIHUB_AUTH_KEY = "발급받은_키"
+# Cloud에서 KBO 자동 크롤이 불안정하면 아래 추가
+STREAMLIT_WEB_RECENT = "0"
+```
+
+**로컬 vs Cloud 차이**
+
+| 기능 | 로컬 | Cloud |
+|------|------|-------|
+| RF 예측·혼잡도·피처 중요도 | ✅ | ✅ |
+| 동네예보(typ02) | Secrets 키 필요 | 동일 |
+| KBO 최근 5경기 자동 수집 | 기본 **ON** (Chrome) | 기본 ON 시 system chromium 사용 코드 포함 **OFF** (Selenium 제한)|
+| 한글 차트 | OS 폰트 / Nanum 다운로드 | `packages.txt` + 앱 내 Nanum 등록 |
+
+배포 후 **Manage app → Reboot**으로 반영합니다.
 
 ---
 
@@ -187,6 +247,10 @@ Streamlit secrets 사용 시: `.streamlit/secrets.toml`에 `KMA_APIHUB_AUTH_KEY`
 | `eda/run_eda.py` | EDA 리포트·차트 생성 |
 | `app/streamlit_app.py` | 관람 수요 예측·혼잡도·기상 참고 웹앱 |
 | `common/config.py` | 강수·기온 버킷, 시즌·순위 임계값 등 |
+| `common/logging_config.py` | 파이프라인·앱 공통 로깅 |
+| `common/stadium_aliases.py` | 구장·팀 표기 정규화 |
+| `common/stadium_region.py` | 구장 → 기상 region_key |
+| `common/kbo_regular_start_time.py` | 정규시즌 기본 개시 시각 |
 | `common/kma_vilage_fcst.py` | 동네예보 typ02 (RN1/POP) |
 | `common/congestion_levels.py` | 혼잡도 구간별 운영 메시지 |
 
@@ -235,13 +299,20 @@ export KMA_APIHUB_AUTH_KEY="발급받은_키"
 
 | 브랜치 | 용도 |
 |--------|------|
-| `main` | 배포용 안정 버전 |
-| `develop` | 기능 통합 브랜치 (현재 Streamlit UX·피처·크롤링 개선 반영) |
-| `feat/*` / `feature/*` | 기능별 개발 브랜치 |
+| `main` | **배포·Streamlit Cloud** 기본 브랜치 (`develop` 병합 반영) |
+| `develop` | 기능 통합 브랜치 (Streamlit UX·피처·Cloud 패치) |
+| `feat/*` / `feature/*` | 기능별 개발 브랜치 (히스토리 보존) |
+
+`main`과 `develop`은 Cloud·chromedriver·한글 폰트 등 배포 수정이 맞춰진 상태를 유지합니다.
 
 ---
 
-## 🙋 문의
+## 👥 팀 · 문의
 
-- 팀장: 허은준
-- 연락처: enzun123@gmail.com
+| 역할 | 이름 | 비고 |
+|------|------|------|
+| 팀장 | 허은준 (enzun123) | enzun123@gmail.com |
+| 팀원 | Kimjiwo_243, leesm9840, whddnjs448-hash |
+
+- **문의:** enzun123@gmail.com
+- **용도:** 교육·팀 프로젝트 (KBO 관중 예측 ML).
