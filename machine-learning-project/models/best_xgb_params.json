@@ -1,0 +1,18 @@
+{
+  "best_params": {
+    "n_estimators": 800,
+    "learning_rate": 0.023146832167089678,
+    "max_depth": 10,
+    "min_child_weight": 20,
+    "subsample": 0.9957523956897302,
+    "colsample_bytree": 0.9139182079325174,
+    "reg_alpha": 2.1142304947173676,
+    "reg_lambda": 0.08950054346217565
+  },
+  "cv_mae_mean": 2458.8194284808574,
+  "test_mae": 1849.148595723541,
+  "test_r2": 0.7832443495948537,
+  "n_trials": 50,
+  "n_cv_splits": 5,
+  "cv_method": "TimeSeriesSplit"
+}

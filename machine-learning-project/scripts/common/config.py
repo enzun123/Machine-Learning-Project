@@ -9,7 +9,8 @@ from __future__ import annotations
 # --- 시즌·구장 ---
 FULL_SEASON_GAMES: int = 144
 SMALL_STADIUM_CAPACITY: float = 15_000.0
-ATTENDANCE_CAP_CLIP_MULTIPLIER: float = 1.05
+# 학습·예측 관중 상한: 구장 정원 초과 불가 (정원 × 이 배수, 1.0 = 정원 그대로)
+ATTENDANCE_CAP_CLIP_MULTIPLIER: float = 1.0
 
 # --- 강수 버킷 (일합계강수량 mm) ---
 RAIN_BINS: tuple[float, ...] = (-1.0, 0.0, 1.0, 5.0, float("inf"))

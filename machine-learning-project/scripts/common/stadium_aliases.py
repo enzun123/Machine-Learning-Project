@@ -12,6 +12,7 @@ from __future__ import annotations
 STADIUM_ALIAS: dict[str, str] = {
     "한밭": "대전",
     "문학": "인천",
+    "부산": "사직",
 }
 
 # 2군·대체 구장 → 홈팀 본구장 (OHE `구장` 통합용). 정원은 실제 구장 기준 유지.
@@ -41,3 +42,8 @@ def stadium_for_model_ohe(stadium: str, home_team: str) -> str:
     if is_secondary_stadium(st):
         return HOME_STADIUM_BY_TEAM.get(str(home_team).strip(), st)
     return st
+
+
+def is_small_stadium_game(actual_stadium: str) -> bool:
+    """소형·대체 구장 여부(정원 1.5만 미만 본구장과 구분)."""
+    return is_secondary_stadium(actual_stadium)

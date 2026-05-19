@@ -193,7 +193,6 @@ def _default_home_team_for_stadium(stadium_name: str, attendance_df: pd.DataFram
         "부산": "롯데",
         "청주": "한화",
         "포항": "삼성",
-        "울산": "NC",
     }
     if st_key in explicit:
         t = explicit[st_key]
@@ -213,7 +212,7 @@ def _fallback_stadium_capacity() -> dict[str, int]:
     """CSV를 못 읽을 때만 사용 (kbo_stadium_info.csv와 동기 유지 권장)."""
     return {
         "잠실": 23750,
-        "고척": 22258,
+        "고척": 16744,
         "인천": 23000,
         "문학": 23000,
         "사직": 22669,
@@ -223,9 +222,9 @@ def _fallback_stadium_capacity() -> dict[str, int]:
         "청주": 10500,
         "포항": 9000,
         "광주": 20500,
-        "대전": 13000,
-        "한밭": 12000,
-        "대구": 29178,
+        "대전": 17000,
+        "한밭": 17000,
+        "대구": 24000,
         "수원": 18700,
     }
 
@@ -363,16 +362,17 @@ def _scalar_hum_bucket_ml(h: float) -> str:
 
 
 def _pick_template_series_ml(tr: pd.DataFrame, home: str, away: str, stadium: str) -> pd.Series:
-    from common.stadium_aliases import STADIUM_ALIAS
+    from common.stadium_aliases import STADIUM_ALIAS, stadium_for_model_ohe
 
     g = tr.copy()
     g["_g"] = g["구장"].astype(str).replace(STADIUM_ALIAS)
     st_n = STADIUM_ALIAS.get(str(stadium).strip(), str(stadium).strip())
+    st_ohe = stadium_for_model_ohe(st_n, home)
     hs, vs = str(home), str(away)
     masks = [
-        (g["홈팀"].astype(str) == hs) & (g["방문팀"].astype(str) == vs) & (g["_g"] == st_n),
-        (g["홈팀"].astype(str) == hs) & (g["_g"] == st_n),
-        g["_g"] == st_n,
+        (g["홈팀"].astype(str) == hs) & (g["방문팀"].astype(str) == vs) & (g["_g"] == st_ohe),
+        (g["홈팀"].astype(str) == hs) & (g["_g"] == st_ohe),
+        g["_g"] == st_ohe,
     ]
     for m in masks:
         sub = g.loc[m]
@@ -392,7 +392,13 @@ def _build_ml_feature_row(
     hum_pct: float,
     cap: int,
 ) -> pd.DataFrame:
-    from common.stadium_aliases import STADIUM_ALIAS, stadium_for_model_ohe
+    from common.stadium_aliases import (
+        HOME_STADIUM_BY_TEAM,
+        STADIUM_ALIAS,
+        is_secondary_stadium,
+        is_small_stadium_game,
+        stadium_for_model_ohe,
+    )
     from modeling.train_model import FEATURE_COLUMNS
 
     row = _pick_template_series_ml(tr, home, away, stadium)
@@ -400,6 +406,12 @@ def _build_ml_feature_row(
     wdn = int(gdt.dayofweek)
     st_actual = STADIUM_ALIAS.get(str(stadium).strip(), str(stadium).strip())
     st_key = stadium_for_model_ohe(st_actual, home)
+    cap_map = st.session_state.get("cap_by_stadium") or load_stadium_capacity_map()
+    if is_secondary_stadium(st_actual):
+        main_st = HOME_STADIUM_BY_TEAM.get(str(home).strip(), st_key)
+        ml_cap = float(cap_map.get(main_st, cap))
+    else:
+        ml_cap = float(cap)
     is_rain_i = int(rain_mm > 0)
     rain_b = _scalar_rain_bucket_ml(rain_mm)
     temp_b = _scalar_temp_bucket_ml(temp_c)
@@ -414,7 +426,7 @@ def _build_ml_feature_row(
         "홈팀": str(home),
         "방문팀": str(away),
         "구장": st_key,
-        "stadium_capacity": float(cap),
+        "stadium_capacity": ml_cap,
         "is_capacity_missing": 0,
         "is_rain": is_rain_i,
         "rain_bucket": rain_b,
@@ -428,7 +440,7 @@ def _build_ml_feature_row(
         "weekday_sin": float(np.sin(2 * np.pi * wdn / 7)),
         "weekday_cos": float(np.cos(2 * np.pi * wdn / 7)),
         "stadium_x_rain": f"{st_key}_{is_rain_i}",
-        "is_small_stadium": int(cap < _SMALL_STADIUM_ML),
+        "is_small_stadium": int(is_small_stadium_game(st_actual)),
         "is_derby": derby,
         "is_childrens_day": int(gdt.month == 5 and gdt.day in (4, 5, 6)),
     }
@@ -661,12 +673,25 @@ def _plot_rf_importance_barh(imp: pd.Series, top_n: int = 15) -> plt.Figure:
     return fig
 
 
+# (key, 표시 이름, joblib 파일명) — benchmark_models.py 와 동일
+ML_MODEL_REGISTRY: list[tuple[str, str, str]] = [
+    ("rf", "RandomForest", "attendance_rf_pipeline.joblib"),
+    ("lgbm", "LightGBM", "attendance_lgbm_pipeline.joblib"),
+    ("xgb", "XGBoost", "attendance_xgb_pipeline.joblib"),
+]
+
+
 @st.cache_resource
-def _load_rf_pipeline():
-    p = PROJECT_ROOT / "models" / "attendance_rf_pipeline.joblib"
+def _load_ml_pipeline(model_filename: str):
+    p = PROJECT_ROOT / "models" / model_filename
     if not p.exists():
         return None
     return joblib.load(p)
+
+
+@st.cache_resource
+def _load_rf_pipeline():
+    return _load_ml_pipeline("attendance_rf_pipeline.joblib")
 
 
 @st.cache_data
@@ -773,9 +798,13 @@ auto_recent_kbo = st.sidebar.checkbox(
 
 st.sidebar.markdown("---")
 
+_ml_train_path = PROJECT_ROOT / "data" / "processed" / "kbo_train_ready.csv"
+_ml_train_ok = _ml_train_path.exists()
+
+def _ml_model_available(fname: str) -> bool:
+    return (PROJECT_ROOT / "models" / fname).exists() and _ml_train_ok
+
 _rf_model_path = PROJECT_ROOT / "models" / "attendance_rf_pipeline.joblib"
-_rf_train_path = PROJECT_ROOT / "data" / "processed" / "kbo_train_ready.csv"
-_rf_artifacts_ok = _rf_model_path.exists() and _rf_train_path.exists()
 
 temperature = st.sidebar.slider(
     "예상 기온(℃)",
@@ -803,18 +832,45 @@ humidity = st.sidebar.slider(
     60
 )
 
-use_rf_model = st.sidebar.checkbox(
-    "RandomForest 관중 예측",
-    value=_rf_artifacts_ok,
-    disabled=not _rf_artifacts_ok,
-    help=(
-        "켜면: 사이드바의 날짜·기온·습도·**일 강수(mm)**·구장 정원 등을 반영해 학습된 RandomForest로 관중을 추정합니다. "
-        "끄면: 과거 평균과 간단 룰(폭염·고습도 등)로 추정합니다.\n\n"
-        "개발·운영 참고: 입력 행은 `data/processed/kbo_train_ready.csv`에서 홈·원정·구장 유사도로 고릅니다. "
-        "강수량은 구간(`rain_bucket` 등)으로 변환되어 모델에 들어갑니다. "
-        "필요 파일: `models/attendance_rf_pipeline.joblib`, 위 CSV. 없거나 오류 시 휴리스틱만 사용합니다."
-    ),
+st.sidebar.markdown("**ML 알고리즘**")
+_ml_help = (
+    "켜면 사이드바 입력(날짜·기온·습도·강수·정원 등)으로 해당 모델이 관중을 추정합니다. "
+    "여러 개를 켜면 **예측값은 평균**으로 표시하고, 아래에서 알고리즘별 수치를 비교할 수 있습니다. "
+    "모델 파일은 `scripts/modeling/benchmark_models.py` 로 생성합니다."
 )
+use_ml_rf = st.sidebar.checkbox(
+    "RandomForest",
+    value=_ml_model_available("attendance_rf_pipeline.joblib"),
+    disabled=not _ml_model_available("attendance_rf_pipeline.joblib"),
+    help=_ml_help,
+)
+use_ml_lgbm = st.sidebar.checkbox(
+    "LightGBM",
+    value=False,
+    disabled=not _ml_model_available("attendance_lgbm_pipeline.joblib"),
+    help=_ml_help,
+)
+use_ml_xgb = st.sidebar.checkbox(
+    "XGBoost",
+    value=False,
+    disabled=not _ml_model_available("attendance_xgb_pipeline.joblib"),
+    help=_ml_help,
+)
+use_ml_models = use_ml_rf or use_ml_lgbm or use_ml_xgb
+_ml_choice_map = {
+    "rf": use_ml_rf,
+    "lgbm": use_ml_lgbm,
+    "xgb": use_ml_xgb,
+}
+if use_ml_models and not _ml_train_ok:
+    st.sidebar.caption("ML: `kbo_train_ready.csv` 없음 → 휴리스틱만 사용됩니다.")
+_missing = [
+    label
+    for key, label, fname in ML_MODEL_REGISTRY
+    if _ml_choice_map.get(key) and not _ml_model_available(fname)
+]
+if _missing:
+    st.sidebar.caption(f"파일 없음(학습 필요): {', '.join(_missing)}")
 
 # =========================
 # 예측: 휴리스틱 + (옵션) RF 파이프라인
@@ -899,19 +955,19 @@ stadium_capacity = get_capacity(stadium)
 
 predicted_heuristic = min(
     predicted_heuristic,
-    max(1, int(stadium_capacity * 1.05)),
+    max(1, int(stadium_capacity)),
 )
 
 ml_used = False
 ml_row_snapshot: dict[str, object] | None = None
+ml_predictions: dict[str, int] = {}
 predicted_attendance = predicted_heuristic
 
-if use_rf_model and _rf_artifacts_ok:
+if use_ml_models and _ml_train_ok:
 
-    pipe = _load_rf_pipeline()
     tr = _load_kbo_train_ready()
 
-    if pipe is not None and tr is not None:
+    if tr is not None:
 
         try:
 
@@ -935,41 +991,73 @@ if use_rf_model and _rf_artifacts_ok:
 
                     X[col] = X[col].astype(str).fillna("missing")
 
-            raw_ml = float(np.asarray(pipe.predict(X))[0])
-            predicted_attendance = int(round(max(0.0, raw_ml)))
-            predicted_attendance = min(
-                predicted_attendance,
-                max(1, int(stadium_capacity * 1.05)),
-            )
-            ml_used = True
-            ml_row_snapshot = _ml_prediction_snapshot(
-                X.iloc[0],
-                float(temperature),
-                float(rainfall_mm),
-                float(humidity),
-            )
+            cap_hi = max(1, int(stadium_capacity))
+            for key, label, fname in ML_MODEL_REGISTRY:
+                if not _ml_choice_map.get(key):
+                    continue
+                pipe = _load_ml_pipeline(fname)
+                if pipe is None:
+                    continue
+                raw_ml = float(np.asarray(pipe.predict(X))[0])
+                pred_i = int(round(max(0.0, raw_ml)))
+                ml_predictions[label] = min(pred_i, cap_hi)
+
+            if ml_predictions:
+                predicted_attendance = int(round(float(np.mean(list(ml_predictions.values())))))
+                ml_used = True
+                ml_row_snapshot = _ml_prediction_snapshot(
+                    X.iloc[0],
+                    float(temperature),
+                    float(rainfall_mm),
+                    float(humidity),
+                )
 
         except Exception as e:
 
-            logger.warning("RF 파이프라인 예측 실패, 휴리스틱 유지: %s", e, exc_info=True)
+            logger.warning("ML 파이프라인 예측 실패, 휴리스틱 유지: %s", e, exc_info=True)
             st.caption("모델 예측에 실패해 **과거 패턴 기반 추정(휴리스틱)** 값을 표시합니다.")
 
 if ml_used:
 
-    st.caption("예측에 **RandomForest** 모델을 반영했습니다.")
+    _ml_labels = ", ".join(ml_predictions.keys())
+    if len(ml_predictions) > 1:
+        st.caption(f"예측에 **{_ml_labels}** 모델을 반영했습니다 (표시값 = 알고리즘별 예측 **평균**).")
+    else:
+        st.caption(f"예측에 **{_ml_labels}** 모델을 반영했습니다.")
 
-    with st.expander("피처 중요도 · 이번 입력 요약 (RandomForest)", expanded=False):
+    if len(ml_predictions) > 1:
+        with st.expander("알고리즘별 예측 비교", expanded=True):
+            st.dataframe(
+                pd.DataFrame(
+                    [{"알고리즘": k, "예측 관중": f"{v:,}명"} for k, v in ml_predictions.items()]
+                ),
+                width="stretch",
+                hide_index=True,
+            )
+
+    _imp_model_label = "RandomForest"
+    if use_ml_rf:
+        _imp_model_label = "RandomForest"
+    elif ml_predictions:
+        _imp_model_label = next(iter(ml_predictions.keys()))
+
+    with st.expander(f"피처 중요도 · 이번 입력 요약 ({_imp_model_label})", expanded=False):
         st.markdown(
             "아래 **막대 그래프**는 학습된 숲 전체에서 평균적으로 분할에 자주 쓰인 변수입니다. "
             "강수·기온·습도·풍 세부 피처는 중요도 표에서 **두 줄(날씨 그룹)** 로 합산했습니다. "
             f"지금 화면의 **{predicted_attendance:,}명** 같은 **한 건의 예측**을 인과적으로 쪼개는 값(SHAP 등)은 아니며, "
             "모델이 전반적으로 어떤 정보에 무게를 두었는지 참고용입니다."
         )
+        _imp_fname = next(
+            (fname for key, label, fname in ML_MODEL_REGISTRY if label == _imp_model_label),
+            "attendance_rf_pipeline.joblib",
+        )
+        _imp_path = PROJECT_ROOT / "models" / _imp_fname
         try:
-            _mt = int(os.path.getmtime(_rf_model_path))
+            _mt = int(os.path.getmtime(_imp_path))
         except OSError:
             _mt = 0
-        _imp = _cached_rf_feature_importance_series(str(_rf_model_path), _mt)
+        _imp = _cached_rf_feature_importance_series(str(_imp_path), _mt)
         if len(_imp) > 0:
             _imp_disp = _group_rf_importance_for_display(_imp)
             _fig_imp = _plot_rf_importance_barh(_imp_disp, top_n=15)
@@ -1041,11 +1129,11 @@ else:
             "동일 **홈·원정·구장** 조합의 과거 관중 평균을 사용했습니다."
         )
 
-    if use_rf_model and not _rf_artifacts_ok:
+    if use_ml_models and not ml_used:
 
         st.caption(
-            "RandomForest를 켰지만 필요한 모델·데이터 파일이 없어 **휴리스틱만** 사용했습니다. "
-            "체크박스 도움말(?)을 확인하세요."
+            "ML 알고리즘을 켰지만 필요한 모델·데이터 파일이 없어 **휴리스틱만** 사용했습니다. "
+            "`benchmark_models.py` 실행 또는 체크박스 도움말(?)을 확인하세요."
         )
 
 # =========================
@@ -1075,9 +1163,8 @@ st.markdown(
 
 st.markdown(
     '<div class="sub-text">'
-    "사이드바에서 켜면 <b>RandomForest 파이프라인</b> "
-    "<code>models/attendance_rf_pipeline.joblib</code>으로 예측하고, "
-    "끄면 <b>과거 CSV 평균 + 날씨 룰</b>만 사용합니다. "
+    "사이드바에서 <b>ML 알고리즘</b>(RandomForest / LightGBM / XGBoost)을 켜면 "
+    "학습된 파이프라인으로 예측하고, 끄면 <b>과거 CSV 평균 + 날씨 룰</b>만 사용합니다. "
     "최근 5경기 차트는 옵션에 따라 KBO 기록실에서 갱신할 수 있습니다."
     "</div>",
     unsafe_allow_html=True,
