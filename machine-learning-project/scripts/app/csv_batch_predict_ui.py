@@ -1,5 +1,5 @@
 """
-Streamlit: CSV 업로드 → 경기별 관중수 예측
+Streamlit: 경기 일정 CSV → 미래(예정) 경기별 예상 관중수 예측
 """
 
 from __future__ import annotations
@@ -121,11 +121,18 @@ def _run_predictions(
 
 
 def render_csv_batch_predict_ui() -> None:
-    st.header("관중수 예측")
+    st.header("미래 경기 예상 관중수")
     st.markdown(
         """
-**경기 일정 CSV**를 올리면, 각 경기의 **예상 관중수(명)** 를 계산합니다.  
-(내부적으로는 학습된 ML 모델이 팀·구장·날씨·과거 관중 패턴을 반영합니다.)
+**예정된 경기 일정 CSV**만 있으면 됩니다. 각 경기마다 **아직 모르는 관중수를 예측**합니다.
+
+| 필요한 것 | 설명 |
+|-----------|------|
+| `경기날짜`, `홈팀`, `방문팀`, `구장` | 2026 시즌 일정처럼 **앞으로 치를 경기** 목록 |
+| `관중수` | **없어도 됨** (미래 경기). 있으면 예측과 비교용 |
+| `기온`, `강수`, `습도` | 없으면 아래 기본값 사용 |
+
+42개 피처 CSV는 만들 필요 없습니다. 일정만 올리면 앱이 피처를 만들고 RF/LightGBM/XGB로 **예상 관중수(명)** 를 냅니다.
         """
     )
 
@@ -138,7 +145,10 @@ def render_csv_batch_predict_ui() -> None:
             mime="text/csv",
         )
 
-    st.caption("CSV 필수 열: `경기날짜`, `홈팀`, `방문팀`, `구장`  ·  선택: `기온`, `강수`, `습도`, `관중수`(있으면 오차 비교)")
+    st.caption(
+        "필수: `경기날짜`, `홈팀`, `방문팀`, `구장`  ·  "
+        "선택: `기온`, `강수`, `습도`  ·  `관중수`는 미래 예측 시 비워 두세요"
+    )
 
     train_path = PROJECT_ROOT / "data" / "processed" / "kbo_train_ready.csv"
     if not train_path.is_file():
@@ -186,7 +196,7 @@ def render_csv_batch_predict_ui() -> None:
                 st.session_state["batch_attendance_result"] = result
 
     if uploaded is None:
-        st.info("일정 CSV를 올린 뒤 아래 **관중수 예측하기**를 누르세요.")
+        st.info("미래·예정 경기 일정 CSV를 올린 뒤 **예상 관중수 계산**을 누르세요.")
         return
 
     raw = _read_uploaded_csv(uploaded)
@@ -198,10 +208,10 @@ def render_csv_batch_predict_ui() -> None:
 
     st.success(f"{len(sched):,}개 경기 인식됨")
 
-    predict_clicked = st.button("관중수 예측하기", type="primary", use_container_width=True)
+    predict_clicked = st.button("예상 관중수 계산", type="primary", use_container_width=True)
 
     if predict_clicked:
-        with st.spinner("관중수 예측 중…"):
+        with st.spinner("미래 경기 관중수 예측 중…"):
             try:
                 result = _run_predictions(
                     "일정",
@@ -223,7 +233,7 @@ def render_csv_batch_predict_ui() -> None:
 
     result = st.session_state["batch_attendance_result"]
 
-    st.subheader("3. 예측 결과 — 예상 관중수")
+    st.subheader("3. 결과 — 경기별 예상 관중수 (미래)")
     display = _format_result_table(result)
     st.dataframe(display, width="stretch", hide_index=True)
 
