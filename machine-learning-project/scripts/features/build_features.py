@@ -46,7 +46,11 @@ from common.config import (
     WIND_BUCKET_LABELS,
 )
 from common.logging_config import setup_logging
-from common.stadium_aliases import STADIUM_ALIAS
+from common.stadium_aliases import (
+    HOME_STADIUM_BY_TEAM,
+    SECONDARY_STADIUM_NAMES,
+    STADIUM_ALIAS,
+)
 
 REQUIRED_COLS = [
     "연도",
@@ -397,6 +401,16 @@ def _add_stadium_capacity_and_clip(df: pd.DataFrame, df_stadium: pd.DataFrame) -
     return df
 
 
+def _merge_secondary_stadium_for_ohe(df: pd.DataFrame) -> pd.DataFrame:
+    """정원 조인 후: 울산·청주·포항 경기의 OHE `구장`을 홈팀 본구장으로 통합."""
+    actual = df["구장"].astype(str).str.strip()
+    home = df["홈팀"].astype(str).str.strip()
+    mask = actual.isin(SECONDARY_STADIUM_NAMES)
+    canonical = home.map(HOME_STADIUM_BY_TEAM).fillna(actual)
+    df["구장"] = np.where(mask, canonical, actual)
+    return df
+
+
 def _add_weather_and_buckets(df: pd.DataFrame) -> pd.DataFrame:
     df["일합계강수량(mm)"] = df["일합계강수량(mm)"].fillna(0)
     df["is_rain"] = (df["일합계강수량(mm)"] > 0).astype(int)
@@ -487,6 +501,7 @@ def _add_calendar_standings_and_playoff(
 def create_features_pro(df_main, df_stadium, standings_path=None):
     df = _prepare_main_frame(df_main)
     df = _add_stadium_capacity_and_clip(df, df_stadium)
+    df = _merge_secondary_stadium_for_ohe(df)
     df = _add_weather_and_buckets(df)
     df = _add_weekday_derby_and_size(df)
     df = _add_calendar_standings_and_playoff(df, standings_path)

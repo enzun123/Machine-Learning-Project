@@ -392,13 +392,14 @@ def _build_ml_feature_row(
     hum_pct: float,
     cap: int,
 ) -> pd.DataFrame:
-    from common.stadium_aliases import STADIUM_ALIAS
+    from common.stadium_aliases import STADIUM_ALIAS, stadium_for_model_ohe
     from modeling.train_model import FEATURE_COLUMNS
 
     row = _pick_template_series_ml(tr, home, away, stadium)
     gdt = pd.Timestamp(game_date)
     wdn = int(gdt.dayofweek)
-    st_key = STADIUM_ALIAS.get(str(stadium).strip(), str(stadium).strip())
+    st_actual = STADIUM_ALIAS.get(str(stadium).strip(), str(stadium).strip())
+    st_key = stadium_for_model_ohe(st_actual, home)
     is_rain_i = int(rain_mm > 0)
     rain_b = _scalar_rain_bucket_ml(rain_mm)
     temp_b = _scalar_temp_bucket_ml(temp_c)
