@@ -744,6 +744,18 @@ else:
 # =========================
 st.sidebar.title("⚾ KBO Attendance Predictor")
 
+_app_mode = st.sidebar.radio(
+    "작업 모드",
+    ["단일 경기 예측", "관중수 예측 (CSV)"],
+    help="CSV 모드: 경기 일정 CSV를 올리면 경기별 예상 관중수를 한 번에 계산합니다.",
+)
+
+if _app_mode == "관중수 예측 (CSV)":
+    from app.csv_batch_predict_ui import render_csv_batch_predict_ui
+
+    render_csv_batch_predict_ui()
+    st.stop()
+
 game_date = st.sidebar.date_input("경기 날짜")
 st.sidebar.caption(
     "차트·최근 경기 자동 반영·예측 입력의 **기준일**입니다. 당일 0시 **이전** 경기만 포함합니다."
