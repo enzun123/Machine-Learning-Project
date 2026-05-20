@@ -272,34 +272,58 @@ STREAMLIT_WEB_RECENT = "0"
 
 ## ⚙️ 모델 정보
 
-- **알고리즘**: RandomForest Regressor (`sklearn` Pipeline + `OneHotEncoder`)
-- **타겟 변환**: `log1p` (`TransformedTargetRegressor`)
-- **검증**: `연도`·`월`·`주차_ISO` 기준 시간 순 홀드아웃 (테스트 약 20%)
-- **저장**: `models/attendance_rf_pipeline.joblib`, `models/test_indices.npy`, `models/train_report.json`
-- **튜닝(선택)**: Optuna + TimeSeriesSplit → `models/best_params.json`
-- **앱 기본**: RandomForest (`attendance_rf_pipeline.joblib`)
-- **선택**: LightGBM / XGBoost (`benchmark_models.py` 저장, CSV·단일 경기 UI에서 체크박스 선택)
+- **데이터**: `kbo_train_ready.csv` **1,436경기** (학습 1,149 / 테스트 287)
+- **검증**: `연도`·`월`·`주차_ISO` 시간 순 홀드아웃 — 테스트 **2025.7~10**
+- **타겟**: `log1p(관중수)` 학습 → 예측 시 역변환
+- **튜닝**: Optuna + TimeSeriesSplit → `models/best_params.json`(RF), `best_lgbm_params.json`, `best_xgb_params.json`
+- **앱 기본 저장 모델**: RandomForest (`models/attendance_rf_pipeline.joblib`) — `train_model.py` 실행 시 `best_params.json` 자동 적용
+- **UI 선택**: LightGBM / XGBoost (`benchmark_models.py`로 저장, Streamlit·CSV에서 체크박스)
 
-**모델 벤치마크 (테스트 287경기, 2025.7–10, 동일 시간 순 분할)** — `reports/modeling/model_benchmark.json`
+### 최종 벤치마크 (동일 테스트 287경기)
+
+`python3 scripts/modeling/benchmark_models.py` 최종 실행 기준 — `reports/modeling/model_benchmark.json`
 
 | 지표 | Dummy(전역 평균) | 구장 평균 | RandomForest | LightGBM | XGBoost |
 |------|------------------|-----------|--------------|----------|---------|
-| MAE | ~4,674 | ~3,952 | **~1,983** | ~2,058 | ~2,018 |
-| R² | ~-0.03 | ~0.33 | ~0.72 | ~0.73 | **~0.75** |
+| **MAE** | 4,671 | 3,945 | 1,964 | **1,911** | 1,928 |
+| **RMSE** | 5,556 | 4,468 | 2,799 | **2,623** | 2,639 |
+| **R²** | -0.03 | 0.33 | 0.74 | **0.77** | 0.77 |
 
-벤치마크 기준 **MAE 최저: RandomForest**. XGBoost는 R²가 가장 높음.
+**MAE·R² 모두 1위: LightGBM** (RF 대비 MAE 약 54명↓). Streamlit 기본은 호환·안정성 위해 **RF**를 유지합니다.
 
-**앱 배포 RF (`train_report.json` / `eval_report.json`, `best_params.json`, 최근 피처·`구장_actual`)**
+### 배포 RF 상세 (`train_model.py` + `evaluate_model.py`)
 
-| MAE | R² |
-|-----|-----|
-| **~1,964** | **~0.74** |
+| 지표 | 값 |
+|------|-----|
+| MAE | **1,964** |
+| RMSE | 2,799 |
+| R² | **0.738** |
+| 잔차 평균 | -355 (평균적으로 약간 과소 예측) |
+| 최대 절대 오차 | 13,488 |
 
-재실행: `python3 scripts/modeling/benchmark_models.py` (XGBoost는 `pip install -e '.[benchmark]'`).
+**구장별 MAE (어려운 구장, `eval_report.json`)**
 
-`evaluate_model.py`는 OHE `구장` 외에 **`구장_actual`(포항·울산·청주 등)** 별 MAE도 `eval_report.json`에 기록합니다.
+| 구분 | 구장 | MAE(명) |
+|------|------|--------|
+| OHE | 광주 | 4,248 |
+| 실제 개최지 | 울산 | 8,313 |
+| OHE | 인천 | 2,773 |
+| 양호 | 대전 | 814 |
+| 양호 | 대구 | 903 |
 
-주요 피처 예: `matchup_prior_mean_att`, `home_prior_mean_att`, `stadium_capacity`, `home_last5_mean_att`, 요일·승률·페넌트·강수/기온 버킷 등 (`build_features.py`·`train_model.py` 참고).
+`evaluate_model.py`는 **`구장_actual`**(포항·울산·청주 등 실제 개최지) 기준 MAE도 `eval_report.json`에 기록합니다.
+
+### 재현 명령
+
+```bash
+cd machine-learning-project
+export PYTHONPATH=scripts
+python3 scripts/modeling/train_model.py      # RF + train_report.json
+python3 scripts/modeling/evaluate_model.py     # eval_report.json
+python3 scripts/modeling/benchmark_models.py   # 3모델 비교 (xgboost: pip install -e '.[benchmark]')
+```
+
+주요 피처: `matchup_prior_mean_att`, `home_last5_mean_att`, `stadium_capacity`, `구장_actual`, 요일·승률·페넌트·기상 버킷 등 (`build_features.py`).
 
 ---
 
