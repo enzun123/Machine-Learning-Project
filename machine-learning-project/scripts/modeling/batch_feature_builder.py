@@ -11,6 +11,7 @@ import pandas as pd
 
 from common.stadium_aliases import (
     STADIUM_ALIAS,
+    is_secondary_stadium,
     is_small_stadium_game,
     stadium_for_model_ohe,
 )
@@ -193,6 +194,12 @@ def _pick_template(tr: pd.DataFrame, home: str, away: str, stadium: str) -> pd.S
     st_n = STADIUM_ALIAS.get(str(stadium).strip(), str(stadium).strip())
     st_ohe = stadium_for_model_ohe(st_n, home)
     hs, vs = str(home), str(away)
+
+    if is_secondary_stadium(st_n) and "is_small_stadium" in g.columns:
+        small_home = g[(g["홈팀"].astype(str) == hs) & (g["is_small_stadium"] == 1)]
+        if len(small_home) >= 1:
+            return small_home.sort_values(["연도", "월", "주차_ISO"]).iloc[-1]
+
     for m in [
         (g["홈팀"].astype(str) == hs) & (g["방문팀"].astype(str) == vs) & (g["_g"] == st_ohe),
         (g["홈팀"].astype(str) == hs) & (g["_g"] == st_ohe),

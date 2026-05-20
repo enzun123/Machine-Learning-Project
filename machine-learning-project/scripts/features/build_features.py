@@ -90,6 +90,7 @@ MODEL_READY_COLUMNS = [
     "홈팀",
     "방문팀",
     "구장",
+    "구장_actual",
     "stadium_capacity",
     "is_capacity_missing",
     "is_rain",
