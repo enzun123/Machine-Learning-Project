@@ -9,7 +9,7 @@ build_features.py  ─  개선 이력
 [수정5] 요일 원핫 플래그: is_friday / is_saturday / is_sunday
 [수정6] 홈팀-방문팀 역대 매치업 평균 관중 피처 (matchup_prior_mean_att)
 [수정7] 소규모/이벤트 구장 플래그: is_small_stadium (capacity < 15,000)
-[수정8] 관중수 이상치 소프트 클리핑: stadium_capacity * 1.05 초과분 제거
+[수정8] 관중수 이상치 클리핑: stadium_capacity 초과분 제거 (정원 초과 불가)
 """
 
 import sys
@@ -46,7 +46,12 @@ from common.config import (
     WIND_BUCKET_LABELS,
 )
 from common.logging_config import setup_logging
-from common.stadium_aliases import STADIUM_ALIAS
+from common.stadium_aliases import (
+    HOME_STADIUM_BY_TEAM,
+    SECONDARY_STADIUM_NAMES,
+    STADIUM_ALIAS,
+    is_small_stadium_game,
+)
 
 REQUIRED_COLS = [
     "연도",
@@ -85,6 +90,7 @@ MODEL_READY_COLUMNS = [
     "홈팀",
     "방문팀",
     "구장",
+    "구장_actual",
     "stadium_capacity",
     "is_capacity_missing",
     "is_rain",
@@ -163,9 +169,14 @@ def add_season_form_and_draw_proxy(df: pd.DataFrame) -> pd.DataFrame:
     )
     hs: dict[tuple[int, str], float] = defaultdict(float)
     hc: dict[tuple[int, str], int] = defaultdict(int)
+    hs_v: dict[tuple[int, str, str], float] = defaultdict(float)
+    hc_v: dict[tuple[int, str, str], int] = defaultdict(int)
     vs: dict[tuple[int, str], float] = defaultdict(float)
     vc: dict[tuple[int, str], int] = defaultdict(int)
     home_hist: dict[tuple[int, str], deque[float]] = defaultdict(lambda: deque(maxlen=FORM_LAST_N_GAMES))
+    home_hist_v: dict[tuple[int, str, str], deque[float]] = defaultdict(
+        lambda: deque(maxlen=FORM_LAST_N_GAMES)
+    )
     away_hist: dict[tuple[int, str], deque[float]] = defaultdict(lambda: deque(maxlen=FORM_LAST_N_GAMES))
     mu_s: dict[tuple[str, str], float] = defaultdict(float)   # [수정6] matchup 누적합
     mu_c: dict[tuple[str, str], int] = defaultdict(int)        # [수정6] matchup 누적수
@@ -179,9 +190,17 @@ def add_season_form_and_draw_proxy(df: pd.DataFrame) -> pd.DataFrame:
         v = str(row["방문팀"])
         att = float(row["관중수"])
         kh, kv = (y, h), (y, v)
+        actual_venue = (
+            str(row["구장_actual"])
+            if "구장_actual" in work.columns and pd.notna(row.get("구장_actual"))
+            else str(row["구장"])
+        )
+        hvk = (y, h, actual_venue)
 
-        # [수정1] cold-start → 전 시즌 팀 평균
-        if hc[kh] > 0:
+        # [수정1] cold-start → 전 시즌 팀 평균 (홈: 구장별 우선, 없으면 팀 전체)
+        if hc_v[hvk] > 0:
+            h_prior = hs_v[hvk] / hc_v[hvk]
+        elif hc[kh] > 0:
             h_prior = hs[kh] / hc[kh]
         else:
             h_prior = prev_home_mean.get((y - 1, h), np.nan)
@@ -191,11 +210,14 @@ def add_season_form_and_draw_proxy(df: pd.DataFrame) -> pd.DataFrame:
         else:
             v_prior = prev_away_mean.get((y - 1, v), np.nan)
 
-        h5 = (
-            float(np.mean(home_hist[kh]))
-            if home_hist[kh]
-            else (h_prior if pd.notna(h_prior) else np.nan)
-        )
+        if home_hist_v[hvk]:
+            h5 = float(np.mean(home_hist_v[hvk]))
+        elif actual_venue in SECONDARY_STADIUM_NAMES:
+            h5 = h_prior if pd.notna(h_prior) else np.nan
+        elif home_hist[kh]:
+            h5 = float(np.mean(home_hist[kh]))
+        else:
+            h5 = h_prior if pd.notna(h_prior) else np.nan
         v5 = (
             float(np.mean(away_hist[kv]))
             if away_hist[kv]
@@ -233,9 +255,12 @@ def add_season_form_and_draw_proxy(df: pd.DataFrame) -> pd.DataFrame:
 
         hs[kh] += att
         hc[kh] += 1
+        hs_v[hvk] += att
+        hc_v[hvk] += 1
         vs[kv] += att
         vc[kv] += 1
         home_hist[kh].append(att)
+        home_hist_v[hvk].append(att)
         away_hist[kv].append(att)
         mu_s[mu_key] += att
         mu_c[mu_key] += 1
@@ -375,15 +400,21 @@ def _prepare_main_frame(df_main: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _stadium_capacity_table(df_stadium: pd.DataFrame) -> pd.Series:
+    if df_stadium.empty or "구장" not in df_stadium.columns or "최대수용인원" not in df_stadium.columns:
+        return pd.Series(dtype=float)
+    st = df_stadium.copy()
+    st["구장"] = st["구장"].replace(STADIUM_ALIAS)
+    st["최대수용인원"] = pd.to_numeric(st["최대수용인원"], errors="coerce")
+    return st.dropna(subset=["구장", "최대수용인원"]).groupby("구장")["최대수용인원"].max()
+
+
 def _add_stadium_capacity_and_clip(df: pd.DataFrame, df_stadium: pd.DataFrame) -> pd.DataFrame:
-    if not df_stadium.empty and "구장" in df_stadium.columns and "최대수용인원" in df_stadium.columns:
-        st = df_stadium.copy()
-        st["구장"] = st["구장"].replace(STADIUM_ALIAS)
-        st["최대수용인원"] = pd.to_numeric(st["최대수용인원"], errors="coerce")
-        st_max_table = st.dropna(subset=["구장", "최대수용인원"]).groupby("구장")["최대수용인원"].max()
-        df["stadium_capacity"] = df["구장"].map(st_max_table)
-    else:
+    st_max_table = _stadium_capacity_table(df_stadium)
+    if st_max_table.empty:
         df["stadium_capacity"] = np.nan
+    else:
+        df["stadium_capacity"] = df["구장"].map(st_max_table)
 
     df["is_capacity_missing"] = df["stadium_capacity"].isnull().astype(int)
     cap_mean = df["stadium_capacity"].mean()
@@ -391,9 +422,21 @@ def _add_stadium_capacity_and_clip(df: pd.DataFrame, df_stadium: pd.DataFrame) -
         cap_mean = 0.0
     df["stadium_capacity"] = df["stadium_capacity"].fillna(cap_mean)
 
-    # [수정8] 관중수 소프트 클리핑 (구장 정원 대비 상한 초과는 데이터 오류로 간주)
+    # [수정8] 관중수 소프트 클리핑 (실제 개최 구장 정원 기준)
     cap_clip = df["stadium_capacity"].clip(lower=1.0) * ATTENDANCE_CAP_CLIP_MULTIPLIER
     df["관중수"] = df["관중수"].clip(upper=cap_clip)
+    return df
+
+
+def _merge_secondary_stadium_for_ohe(df: pd.DataFrame, df_stadium: pd.DataFrame) -> pd.DataFrame:
+    """대체 구장: OHE용 구장만 본구장으로, 정원·관중은 실제 개최지(구장_actual) 유지."""
+    actual = df["구장"].astype(str).str.strip()
+    home = df["홈팀"].astype(str).str.strip()
+    mask = actual.isin(SECONDARY_STADIUM_NAMES)
+    canonical = home.map(HOME_STADIUM_BY_TEAM).fillna(actual)
+    df["구장_actual"] = actual
+    df["구장"] = np.where(mask, canonical, actual)
+    # stadium_capacity는 _add_stadium_capacity_and_clip 에서 실제 구장명으로 이미 매핑됨
     return df
 
 
@@ -452,7 +495,9 @@ def _add_weekday_derby_and_size(df: pd.DataFrame) -> pd.DataFrame:
 
     df["stadium_x_rain"] = df["구장"].astype(str) + "_" + df["is_rain"].astype(str)
 
-    df["is_small_stadium"] = (df["stadium_capacity"] < SMALL_STADIUM_CAPACITY).astype(int)
+    df["is_small_stadium"] = df["구장_actual"].map(
+        lambda s: int(is_small_stadium_game(str(s)))
+    ).astype(int)
 
     derby_pairs: set[frozenset[str]] = {
         frozenset({"LG", "두산"}),
@@ -487,6 +532,7 @@ def _add_calendar_standings_and_playoff(
 def create_features_pro(df_main, df_stadium, standings_path=None):
     df = _prepare_main_frame(df_main)
     df = _add_stadium_capacity_and_clip(df, df_stadium)
+    df = _merge_secondary_stadium_for_ohe(df, df_stadium)
     df = _add_weather_and_buckets(df)
     df = _add_weekday_derby_and_size(df)
     df = _add_calendar_standings_and_playoff(df, standings_path)
@@ -536,7 +582,7 @@ if __name__ == "__main__":
         print("[수정5] is_friday / is_saturday / is_sunday 플래그 추가")
         print("[수정6] matchup_prior_mean_att: 역대 매치업 평균 관중")
         print("[수정7] is_small_stadium: capacity < 15,000")
-        print("[수정8] 관중수 이상치 소프트 클리핑 (정원 105% 초과 제거)")
+        print("[수정8] 관중수 이상치 클리핑 (정원 초과 제거)")
         print("[트랙1] gb_to_5th, is_pennant_race, is_season_opener, is_childrens_day, playoff_urgency")
         print("[더비] is_derby: LG-두산, 롯데-NC, 삼성-KIA, KT-키움, SSG-한화")
         print("-" * 50)

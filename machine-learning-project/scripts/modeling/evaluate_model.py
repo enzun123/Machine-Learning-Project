@@ -64,6 +64,20 @@ def main() -> None:
         .sort_values(ascending=False)
     )
 
+    mae_by_stadium_actual: pd.Series | None = None
+    if "구장_actual" in d_test.columns:
+        mae_by_stadium_actual = (
+            pd.DataFrame(
+                {
+                    "구장_actual": d_test["구장_actual"].astype(str).values,
+                    "ae": np.abs(residual),
+                }
+            )
+            .groupby("구장_actual", observed=True)["ae"]
+            .mean()
+            .sort_values(ascending=False)
+        )
+
     split_info = {}
     if train_report_path.exists():
         with open(train_report_path, encoding="utf-8") as f:
@@ -89,14 +103,17 @@ def main() -> None:
         y_test,
         n_repeats=10,
         random_state=RANDOM_STATE,
-        n_jobs=-1,
+        n_jobs=1,
     )
     imp = pd.Series(r.importances_mean, index=FEATURE_COLUMNS).sort_values(ascending=False)
     print("\nPermutation importance (상위 10개):")
     print(imp.head(10).to_string())
 
-    print("\n구장별 평균 절대오차 (상위 5)")
+    print("\n구장별 평균 절대오차 — OHE 구장 (상위 5)")
     print(mae_by_stadium.head(5).to_string())
+    if mae_by_stadium_actual is not None and len(mae_by_stadium_actual) > 0:
+        print("\n구장별 평균 절대오차 — 실제 개최지 (상위 10)")
+        print(mae_by_stadium_actual.head(10).to_string())
 
     out_eval = root / "models" / "eval_report.json"
     payload = {
@@ -111,6 +128,8 @@ def main() -> None:
         "mae_by_stadium_top15": mae_by_stadium.head(15).to_dict(),
         **split_info,
     }
+    if mae_by_stadium_actual is not None:
+        payload["mae_by_stadium_actual_top15"] = mae_by_stadium_actual.head(15).to_dict()
     with open(out_eval, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
     print(f"\n저장: {out_eval}")

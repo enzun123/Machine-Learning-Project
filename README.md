@@ -50,12 +50,15 @@ Machine-Learning-Project/
     └── scripts/
         ├── app/
         │   ├── streamlit_app.py
+        │   ├── csv_batch_predict_ui.py  # 미래 경기 일정 CSV 일괄 예측
         │   ├── assets/fonts/            # Nanum Gothic (Cloud 한글 차트)
         │   └── styles/app.css           # 웹앱 커스텀 스타일
         ├── common/
         │   ├── config.py                # 파이프라인 전역 상수
         │   ├── logging_config.py
         │   ├── stadium_aliases.py
+        │   ├── stadium_capacity.py      # 수용 인원·클리핑
+        │   ├── secondary_venue_stats.py # 포항·울산·청주 prior 보정
         │   ├── stadium_region.py        # 구장 → region_key
         │   ├── congestion_levels.py     # 혼잡도별 운영 액션
         │   ├── kma_vilage_fcst.py       # 동네예보(typ02) RN1/POP
@@ -123,6 +126,7 @@ pip install -r requirements.txt
 
 ```bash
 cd machine-learning-project
+export PYTHONPATH=scripts   # Windows: set PYTHONPATH=scripts
 
 # 1) 원시 데이터 수집 (Selenium + Chrome 필요)
 python3 scripts/data_collection/kbo_scraping.py
@@ -152,7 +156,7 @@ python3 scripts/modeling/evaluate_model.py
 python3 scripts/modeling/tune_hyperparams.py --n-trials 50
 ```
 
-> 💡 위 [저장소에 포함된 데이터](#-저장소에-포함된-데이터-학습앱-생략-가능)가 있으면 해당 단계부터 시작하거나 앱만 실행하면 됩니다.
+> 💡 위 [저장소에 포함된 데이터](#-저장소에-포함된-데이터-학습앱-생략-가능)가 있으면 5~8단계(피처·학습·평가)부터 시작하거나 앱만 실행하면 됩니다.
 
 ### Streamlit 웹앱 실행 (로컬)
 
@@ -218,14 +222,18 @@ STREAMLIT_WEB_RECENT = "0"
 
 | 기능 | 설명 |
 |------|------|
+| **미래 경기 관중수 (CSV)** | 일정 CSV(`경기날짜, 홈팀, 방문팀, 구장`) 업로드 → 경기별 예상 관중·혼잡도 일괄 계산 |
 | 사이드바 입력 | 경기 날짜, 구장·홈·원정팀, 기온·일 강수(mm)·습도 |
 | 구장 연동 | 구장 변경 시 기본 홈팀 자동 설정 |
-| 예측 모드 | **RandomForest** 또는 **과거 CSV 평균 + 날씨 룰(휴리스틱)** |
+| 예측 모드 | **RandomForest** / LightGBM / XGBoost(선택) 또는 **과거 평균 휴리스틱** |
+| 대체 구장 | 포항·울산·청주 — 실제 개최지 prior 보정·수용 인원 1.5만 등 |
 | 피처 중요도 | RF 사용 시 막대 그래프·이번 입력 피처 요약 |
 | 혼잡도·운영 | 수용률(%) → LOW / NORMAL / HIGH 및 매장·안전 액션 안내 |
 | 최근 5경기 | 옵션 시 KBO 기록실에서 구장별 최근 경기 차트 (Selenium) |
 | 동네예보 참고 | 개시 3시간 전 RN1/POP·우천 취소 참고 (관중 예측값과 분리) |
 | 스타일 | `scripts/app/styles/app.css` 커스텀 UI |
+
+> **2026·미래 일정 한계:** 모델은 2024–25 시즌으로 학습됩니다. 2026 일정·순위·날씨가 학습 분포와 다르면 오차가 커질 수 있습니다.
 
 ---
 
@@ -243,9 +251,15 @@ STREAMLIT_WEB_RECENT = "0"
 | `modeling/train_model.py` | 시간 순 홀드아웃 + RF 파이프라인 학습 |
 | `modeling/evaluate_model.py` | 테스트 구간 재평가·리포트 |
 | `modeling/predict.py` | 저장 모델 배치 예측 |
+| `modeling/batch_feature_builder.py` | 일정 CSV → 피처 행 |
+| `modeling/batch_predict.py` | 피처 DataFrame 일괄 예측 |
+| `modeling/benchmark_models.py` | RF/LGBM/XGB 비교 (`pip install -e '.[benchmark]'`) |
 | `modeling/tune_hyperparams.py` | Optuna + TimeSeriesSplit 튜닝 |
 | `eda/run_eda.py` | EDA 리포트·차트 생성 |
 | `app/streamlit_app.py` | 관람 수요 예측·혼잡도·기상 참고 웹앱 |
+| `app/csv_batch_predict_ui.py` | CSV 일괄 예측 UI |
+| `common/stadium_capacity.py` | 구장 정원·예측 상한 |
+| `common/secondary_venue_stats.py` | 대체 구장 관중 prior |
 | `common/config.py` | 강수·기온 버킷, 시즌·순위 임계값 등 |
 | `common/logging_config.py` | 파이프라인·앱 공통 로깅 |
 | `common/stadium_aliases.py` | 구장·팀 표기 정규화 |
@@ -258,21 +272,58 @@ STREAMLIT_WEB_RECENT = "0"
 
 ## ⚙️ 모델 정보
 
-- **알고리즘**: RandomForest Regressor (`sklearn` Pipeline + `OneHotEncoder`)
-- **타겟 변환**: `log1p` (`TransformedTargetRegressor`)
-- **검증**: `연도`·`월`·`주차_ISO` 기준 시간 순 홀드아웃 (테스트 약 20%)
-- **저장**: `models/attendance_rf_pipeline.joblib`, `models/test_indices.npy`, `models/train_report.json`
-- **튜닝(선택)**: Optuna + TimeSeriesSplit → `models/best_params.json`
-- **선택 모델**: LightGBM (`train_model.py`에서 `HAS_LGBM`일 때만)
+- **데이터**: `kbo_train_ready.csv` **1,436경기** (학습 1,149 / 테스트 287)
+- **검증**: `연도`·`월`·`주차_ISO` 시간 순 홀드아웃 — 테스트 **2025.7~10**
+- **타겟**: `log1p(관중수)` 학습 → 예측 시 역변환
+- **튜닝**: Optuna + TimeSeriesSplit → `models/best_params.json`(RF), `best_lgbm_params.json`, `best_xgb_params.json`
+- **앱 기본 저장 모델**: RandomForest (`models/attendance_rf_pipeline.joblib`) — `train_model.py` 실행 시 `best_params.json` 자동 적용
+- **UI 선택**: LightGBM / XGBoost (`benchmark_models.py`로 저장, Streamlit·CSV에서 체크박스)
 
-**현재 저장 리포트 기준 (테스트 구간, 참고용)**
+### 최종 벤치마크 (동일 테스트 287경기)
 
-| 지표 | Dummy(전역 평균) | 구장 평균 | RandomForest |
-|------|------------------|-----------|--------------|
-| MAE | ~4,673 | ~3,827 | **~1,943** |
-| R² | ~-0.03 | ~0.37 | **~0.73** |
+`python3 scripts/modeling/benchmark_models.py` 최종 실행 기준 — `reports/modeling/model_benchmark.json`
 
-주요 피처 예: `matchup_prior_mean_att`, `home_prior_mean_att`, `stadium_capacity`, `home_last5_mean_att`, 요일·승률·페넌트·강수/기온 버킷 등 (`build_features.py`·`train_model.py` 참고).
+| 지표 | Dummy(전역 평균) | 구장 평균 | RandomForest | LightGBM | XGBoost |
+|------|------------------|-----------|--------------|----------|---------|
+| **MAE** | 4,671 | 3,945 | 1,964 | **1,911** | 1,928 |
+| **RMSE** | 5,556 | 4,468 | 2,799 | **2,623** | 2,639 |
+| **R²** | -0.03 | 0.33 | 0.74 | **0.77** | 0.77 |
+
+**MAE·R² 모두 1위: LightGBM** (RF 대비 MAE 약 54명↓). Streamlit 기본은 호환·안정성 위해 **RF**를 유지합니다.
+
+### 배포 RF 상세 (`train_model.py` + `evaluate_model.py`)
+
+| 지표 | 값 |
+|------|-----|
+| MAE | **1,964** |
+| RMSE | 2,799 |
+| R² | **0.738** |
+| 잔차 평균 | -355 (평균적으로 약간 과소 예측) |
+| 최대 절대 오차 | 13,488 |
+
+**구장별 MAE (어려운 구장, `eval_report.json`)**
+
+| 구분 | 구장 | MAE(명) |
+|------|------|--------|
+| OHE | 광주 | 4,248 |
+| 실제 개최지 | 울산 | 8,313 |
+| OHE | 인천 | 2,773 |
+| 양호 | 대전 | 814 |
+| 양호 | 대구 | 903 |
+
+`evaluate_model.py`는 **`구장_actual`**(포항·울산·청주 등 실제 개최지) 기준 MAE도 `eval_report.json`에 기록합니다.
+
+### 재현 명령
+
+```bash
+cd machine-learning-project
+export PYTHONPATH=scripts
+python3 scripts/modeling/train_model.py      # RF + train_report.json
+python3 scripts/modeling/evaluate_model.py     # eval_report.json
+python3 scripts/modeling/benchmark_models.py   # 3모델 비교 (xgboost: pip install -e '.[benchmark]')
+```
+
+주요 피처: `matchup_prior_mean_att`, `home_last5_mean_att`, `stadium_capacity`, `구장_actual`, 요일·승률·페넌트·기상 버킷 등 (`build_features.py`).
 
 ---
 
@@ -312,7 +363,7 @@ export KMA_APIHUB_AUTH_KEY="발급받은_키"
 | 역할 | 이름 | 비고 |
 |------|------|------|
 | 팀장 | 허은준 (enzun123) | enzun123@gmail.com |
-| 팀원 | Kimjiwo_243, leesm9840, whddnjs448-hash |
+| 팀원 | 김지원(Kimjiwo_243), 이승민(leesm9840),최종원(whddnjs448-hash) |
 
 - **문의:** enzun123@gmail.com
 - **용도:** 교육·팀 프로젝트 (KBO 관중 예측 ML).

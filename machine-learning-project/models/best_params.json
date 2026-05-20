@@ -1,13 +1,13 @@
 {
   "best_params": {
-    "n_estimators": 300,
-    "max_depth": 19,
-    "min_samples_leaf": 9,
-    "max_features": 0.7235339914781745
+    "n_estimators": 600,
+    "max_depth": 13,
+    "min_samples_leaf": 10,
+    "max_features": 0.7447431330271352
   },
-  "cv_mae_mean": 2491.7802853595717,
-  "test_mae": 1943.4755255175476,
-  "test_r2": 0.7337439706705339,
+  "cv_mae_mean": 2469.0281739194143,
+  "test_mae": 1913.468404335657,
+  "test_r2": 0.7455287334451826,
   "n_trials": 50,
   "n_cv_splits": 5,
   "cv_method": "TimeSeriesSplit"
