@@ -218,10 +218,10 @@ def _fallback_stadium_capacity() -> dict[str, int]:
         "사직": 22669,
         "부산": 22669,
         "창원": 22112,
-        "울산": 22000,
+        "울산": 15000,
         "청주": 10500,
-        "포항": 9000,
-        "광주": 20500,
+        "포항": 15000,
+        "광주": 22000,
         "대전": 17000,
         "한밭": 17000,
         "대구": 24000,
@@ -229,54 +229,26 @@ def _fallback_stadium_capacity() -> dict[str, int]:
     }
 
 
-@st.cache_data
-def load_stadium_capacity_map() -> dict[str, int]:
-    BASE_DIR = Path(__file__).resolve().parent
-    root = BASE_DIR.parent.parent
-    for path in (
-        root / "data" / "external" / "kbo_stadium_info.csv",
-        BASE_DIR.parent.parent.parent / "data" / "external" / "kbo_stadium_info.csv",
-    ):
-        if not path.exists():
-            continue
-        st_df = pd.read_csv(path)
-        if not {"구장", "최대수용인원"}.issubset(st_df.columns):
-            continue
-        from common.stadium_aliases import STADIUM_ALIAS
+def _load_app_capacity_map() -> dict[str, int]:
+    from common.stadium_capacity import load_capacity_map_for_app
 
-        s = st_df.copy()
-        s["구장"] = s["구장"].astype(str).replace(STADIUM_ALIAS)
-        s["최대수용인원"] = pd.to_numeric(s["최대수용인원"], errors="coerce")
-        g = s.dropna(subset=["구장", "최대수용인원"]).groupby("구장")["최대수용인원"].max()
-        out = g.astype(int).to_dict()
-        if out:
-            return out
-    return _fallback_stadium_capacity()
+    out = load_capacity_map_for_app(PROJECT_ROOT)
+    return out if out else _fallback_stadium_capacity()
 
 
 def _ensure_session_data() -> None:
     if "df" not in st.session_state:
         st.session_state.df = load_data()
-    if "cap_by_stadium" not in st.session_state:
-        st.session_state.cap_by_stadium = load_stadium_capacity_map()
+    # kbo_stadium_info / kbo_train_ready 갱신 시 정원 반영 (세션에 예전 값 고정 방지)
+    st.session_state.cap_by_stadium = _load_app_capacity_map()
 
 
-def get_capacity(stadium_name: str) -> int:
-    from common.stadium_aliases import STADIUM_ALIAS
+def get_capacity(stadium_name: str, home_team: str | None = None) -> int:
+    from common.stadium_capacity import venue_clip_capacity
 
-    cap_by = st.session_state.get("cap_by_stadium") or {}
-    raw = str(stadium_name).strip()
-    if not raw:
-        return 20000
-    norm = STADIUM_ALIAS.get(raw, raw)
-    if norm in cap_by:
-        return int(cap_by[norm])
-    if raw in cap_by:
-        return int(cap_by[raw])
-    for gu, c in cap_by.items():
-        if gu in raw or raw in gu:
-            return int(c)
-    return 20000
+    cap_by = st.session_state.get("cap_by_stadium") or _load_app_capacity_map()
+    home = home_team if home_team is not None else st.session_state.get("fld_home_team", "")
+    return venue_clip_capacity(str(stadium_name), str(home), cap_by)
 
 
 try:
@@ -392,13 +364,13 @@ def _build_ml_feature_row(
     hum_pct: float,
     cap: int,
 ) -> pd.DataFrame:
+    from common.secondary_venue_stats import apply_secondary_priors_to_row
     from common.stadium_aliases import (
-        HOME_STADIUM_BY_TEAM,
         STADIUM_ALIAS,
-        is_secondary_stadium,
         is_small_stadium_game,
         stadium_for_model_ohe,
     )
+    from common.stadium_capacity import model_feature_capacity
     from modeling.train_model import FEATURE_COLUMNS
 
     row = _pick_template_series_ml(tr, home, away, stadium)
@@ -406,12 +378,8 @@ def _build_ml_feature_row(
     wdn = int(gdt.dayofweek)
     st_actual = STADIUM_ALIAS.get(str(stadium).strip(), str(stadium).strip())
     st_key = stadium_for_model_ohe(st_actual, home)
-    cap_map = st.session_state.get("cap_by_stadium") or load_stadium_capacity_map()
-    if is_secondary_stadium(st_actual):
-        main_st = HOME_STADIUM_BY_TEAM.get(str(home).strip(), st_key)
-        ml_cap = float(cap_map.get(main_st, cap))
-    else:
-        ml_cap = float(cap)
+    cap_map = st.session_state.get("cap_by_stadium") or _load_app_capacity_map()
+    ml_cap = float(model_feature_capacity(stadium, home, cap_map))
     is_rain_i = int(rain_mm > 0)
     rain_b = _scalar_rain_bucket_ml(rain_mm)
     temp_b = _scalar_temp_bucket_ml(temp_c)
@@ -447,6 +415,7 @@ def _build_ml_feature_row(
     for k, v in upd.items():
         if k in d:
             d[k] = v
+    d = apply_secondary_priors_to_row(d, PROJECT_ROOT, home, away, st_actual, gdt)
     return pd.DataFrame([d])
 
 
@@ -744,6 +713,14 @@ else:
 # =========================
 st.sidebar.title("⚾ KBO Attendance Predictor")
 
+_ml_train_path = PROJECT_ROOT / "data" / "processed" / "kbo_train_ready.csv"
+_ml_train_ok = _ml_train_path.exists()
+
+
+def _ml_model_available(fname: str) -> bool:
+    return (PROJECT_ROOT / "models" / fname).is_file() and _ml_train_ok
+
+
 _app_mode = st.sidebar.radio(
     "작업 모드",
     ["단일 경기 예측", "미래 경기 관중수 (CSV)"],
@@ -751,9 +728,65 @@ _app_mode = st.sidebar.radio(
 )
 
 if _app_mode == "미래 경기 관중수 (CSV)":
+    st.sidebar.markdown("---")
+    st.sidebar.caption(
+        "일정 CSV에 **기온·강수·습도** 열이 없으면 아래 값을 모든 경기에 적용합니다."
+    )
+    _batch_temp = st.sidebar.slider("예상 기온(℃)", -10, 40, 18)
+    _batch_rain = st.sidebar.slider(
+        "일 합계 강수(mm)",
+        0.0,
+        120.0,
+        0.0,
+        0.5,
+    )
+    _batch_hum = st.sidebar.slider("예상 습도(%)", 0, 100, 55)
+
+    st.sidebar.markdown("**ML 알고리즘**")
+    _batch_ml_help = (
+        "켜면 업로드한 일정 각 경기에 학습된 파이프라인으로 관중을 추정합니다. "
+        "여러 개를 켜면 **경기별 예측은 평균**으로 표시합니다."
+    )
+    _batch_use_rf = st.sidebar.checkbox(
+        "RandomForest",
+        value=_ml_model_available("attendance_rf_pipeline.joblib"),
+        disabled=not _ml_model_available("attendance_rf_pipeline.joblib"),
+        help=_batch_ml_help,
+    )
+    _batch_use_lgbm = st.sidebar.checkbox(
+        "LightGBM",
+        value=False,
+        disabled=not _ml_model_available("attendance_lgbm_pipeline.joblib"),
+        help=_batch_ml_help,
+    )
+    _batch_use_xgb = st.sidebar.checkbox(
+        "XGBoost",
+        value=False,
+        disabled=not _ml_model_available("attendance_xgb_pipeline.joblib"),
+        help=_batch_ml_help,
+    )
+    _batch_chosen: list[str] = []
+    if _batch_use_rf:
+        _batch_chosen.append("RandomForest")
+    if _batch_use_lgbm:
+        _batch_chosen.append("LightGBM")
+    if _batch_use_xgb:
+        _batch_chosen.append("XGBoost")
+    if not _batch_chosen and _ml_train_ok:
+        st.sidebar.warning("예측 모델을 하나 이상 선택하세요.")
+    if not _ml_train_ok:
+        st.sidebar.caption("ML: `kbo_train_ready.csv` 없음 — `build_features.py` 실행 필요.")
+
     from app.csv_batch_predict_ui import render_csv_batch_predict_ui
 
-    render_csv_batch_predict_ui()
+    render_csv_batch_predict_ui(
+        chosen=_batch_chosen,
+        default_temp=float(_batch_temp),
+        default_rain=float(_batch_rain),
+        default_hum=float(_batch_hum),
+        cap_by_stadium=st.session_state.cap_by_stadium,
+        ml_train_ok=_ml_train_ok,
+    )
     st.stop()
 
 game_date = st.sidebar.date_input("경기 날짜")
@@ -963,7 +996,7 @@ if humidity >= 85:
         predicted_heuristic * 0.98
     )
 
-stadium_capacity = get_capacity(stadium)
+stadium_capacity = get_capacity(stadium, home_team)
 
 predicted_heuristic = min(
     predicted_heuristic,

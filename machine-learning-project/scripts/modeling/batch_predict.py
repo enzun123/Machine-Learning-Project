@@ -86,7 +86,12 @@ def predict_batch(
 
     prepared = prepare_feature_frame(df)
     X = prepared[FEATURE_COLUMNS]
-    cap = prepared["stadium_capacity"] if "stadium_capacity" in prepared.columns else None
+    if "clip_capacity" in prepared.columns:
+        cap = prepared["clip_capacity"]
+    elif "stadium_capacity" in prepared.columns:
+        cap = prepared["stadium_capacity"]
+    else:
+        cap = None
 
     out = df.copy()
     pred_cols: list[str] = []

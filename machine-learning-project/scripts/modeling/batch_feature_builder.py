@@ -10,13 +10,19 @@ import numpy as np
 import pandas as pd
 
 from common.stadium_aliases import (
-    HOME_STADIUM_BY_TEAM,
     STADIUM_ALIAS,
-    is_secondary_stadium,
     is_small_stadium_game,
     stadium_for_model_ohe,
 )
+from common.secondary_venue_stats import apply_secondary_priors_to_row
+from common.stadium_capacity import (
+    load_capacity_map_for_app,
+    model_feature_capacity,
+    venue_clip_capacity,
+)
 from modeling.train_model import FEATURE_COLUMNS
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 RAIN_LABELS_ML = ["No_Rain", "Rain_0_1mm", "Rain_1_5mm", "Rain_5mm_plus"]
 _DERBY_PAIRS = {
@@ -51,11 +57,79 @@ def load_stadium_capacity_map(root: Path) -> dict[str, int]:
     return cap
 
 
+def _detect_csv_sep(sample: str) -> str:
+    line = sample.split("\n", 1)[0] if sample else ""
+    if line.count(";") >= max(1, line.count(",")) and ";" in line:
+        return ";"
+    if "\t" in line and line.count("\t") >= line.count(","):
+        return "\t"
+    return ","
+
+
+def read_schedule_csv_bytes(data: bytes) -> pd.DataFrame:
+    """업로드 바이트 → 일정 DataFrame (인코딩·구분자 자동)."""
+    last_err: Exception | None = None
+    for enc in ("utf-8-sig", "cp949", "utf-8"):
+        try:
+            text = data.decode(enc)
+        except UnicodeDecodeError:
+            continue
+        sep = _detect_csv_sep(text[:4096])
+        df = pd.read_csv(
+            pd.io.common.StringIO(text),
+            sep=sep,
+            encoding=enc,
+            skipinitialspace=True,
+        )
+        try:
+            return normalize_schedule_csv(df)
+        except KeyError as e:
+            last_err = e
+            if sep != ",":
+                df = pd.read_csv(pd.io.common.StringIO(text), sep=",", encoding=enc)
+                try:
+                    return normalize_schedule_csv(df)
+                except KeyError as e2:
+                    last_err = e2
+    if last_err is not None:
+        raise last_err
+    raise ValueError("CSV 인코딩을 읽을 수 없습니다. UTF-8 또는 CP949로 저장해 주세요.")
+
+
+def _is_blank_cell(v) -> bool:
+    if v is None or (isinstance(v, float) and np.isnan(v)):
+        return True
+    s = str(v).strip()
+    return s == "" or s.lower() in ("nan", "nat", "none", "<na>")
+
+
+def parse_schedule_date(value) -> pd.Timestamp | None:
+    if _is_blank_cell(value):
+        return None
+    if isinstance(value, (int, float)) and not (isinstance(value, float) and np.isnan(value)):
+        try:
+            ts = pd.to_datetime(float(value), unit="D", origin="1899-12-30", errors="coerce")
+            if pd.notna(ts):
+                return pd.Timestamp(ts).normalize()
+        except (TypeError, ValueError, OverflowError):
+            pass
+    s = str(value).strip()
+    dt = pd.to_datetime(s, errors="coerce")
+    if pd.notna(dt):
+        return pd.Timestamp(dt).normalize()
+    if "." in s:
+        parts = [p.strip() for p in s.split(".") if p.strip()]
+        if len(parts) == 3 and all(p.isdigit() for p in parts):
+            y, m, d = (int(parts[0]), int(parts[1]), int(parts[2]))
+            return pd.Timestamp(year=y, month=m, day=d)
+    return None
+
+
 def normalize_schedule_csv(df: pd.DataFrame) -> pd.DataFrame:
     """다양한 헤더명 → 경기날짜, 홈팀, 방문팀, 구장 (+ 선택 기상·관중)."""
     col_map: dict[str, str] = {}
     for col in df.columns:
-        c = str(col).strip()
+        c = str(col).strip().lstrip("\ufeff")
         for canonical, aliases in _SCHEDULE_COLUMN_ALIASES.items():
             if c == canonical or c.lower() == canonical.lower():
                 col_map[col] = canonical
@@ -69,8 +143,16 @@ def normalize_schedule_csv(df: pd.DataFrame) -> pd.DataFrame:
     if missing:
         raise KeyError(
             f"일정 CSV 필수 컬럼 누락: {missing}. "
-            f"필요: 날짜·홈팀·방문팀·구장 (예: 경기날짜, 홈팀, 방문팀, 구장)"
+            f"현재 열: {list(df.columns)[:12]}{'…' if len(df.columns) > 12 else ''}. "
+            f"엑셀은 'CSV UTF-8'로 저장하거나, 구분 기호가 ; 이면 세미콜론 CSV로 저장해 주세요."
         )
+    mask = out[required].apply(
+        lambda row: any(not _is_blank_cell(v) for v in row),
+        axis=1,
+    )
+    out = out.loc[mask].reset_index(drop=True)
+    if len(out) == 0:
+        raise ValueError("유효한 경기 행이 없습니다. 경기날짜·홈팀·방문팀·구장을 채워 주세요.")
     return out
 
 
@@ -122,16 +204,6 @@ def _pick_template(tr: pd.DataFrame, home: str, away: str, stadium: str) -> pd.S
     return g.sort_values(["연도", "월", "주차_ISO"]).iloc[-1]
 
 
-def _get_cap(stadium: str, home: str, cap_map: dict[str, int]) -> int:
-    st = STADIUM_ALIAS.get(str(stadium).strip(), str(stadium).strip())
-    if st in cap_map:
-        return int(cap_map[st])
-    if is_secondary_stadium(st):
-        main = HOME_STADIUM_BY_TEAM.get(str(home).strip(), st)
-        return int(cap_map.get(main, 20_000))
-    return 20_000
-
-
 def build_one_feature_row(
     tr: pd.DataFrame,
     *,
@@ -149,11 +221,7 @@ def build_one_feature_row(
     wdn = int(gdt.dayofweek)
     st_actual = STADIUM_ALIAS.get(str(stadium).strip(), str(stadium).strip())
     st_key = stadium_for_model_ohe(st_actual, home)
-    if is_secondary_stadium(st_actual):
-        main_st = HOME_STADIUM_BY_TEAM.get(str(home).strip(), st_key)
-        ml_cap = float(cap_map.get(main_st, _get_cap(stadium, home, cap_map)))
-    else:
-        ml_cap = float(_get_cap(stadium, home, cap_map))
+    ml_cap = float(model_feature_capacity(stadium, home, cap_map))
     is_rain_i = int(float(rain_mm) > 0)
 
     d = {c: row.get(c, np.nan) for c in FEATURE_COLUMNS}
@@ -185,6 +253,14 @@ def build_one_feature_row(
     for k, v in upd.items():
         if k in d:
             d[k] = v
+    d = apply_secondary_priors_to_row(
+        d,
+        PROJECT_ROOT,
+        home,
+        away,
+        st_actual,
+        gdt,
+    )
     return d
 
 
@@ -200,10 +276,12 @@ def build_features_from_schedule(
     """일정 표 → FEATURE_COLUMNS DataFrame."""
     sched = normalize_schedule_csv(schedule)
     rows: list[dict] = []
-    for _, r in sched.iterrows():
-        dt = pd.to_datetime(r["경기날짜"], errors="coerce")
-        if pd.isna(dt):
-            raise ValueError(f"날짜 파싱 실패: {r['경기날짜']}")
+    bad_dates: list[str] = []
+    for i, r in sched.iterrows():
+        dt = parse_schedule_date(r["경기날짜"])
+        if dt is None:
+            bad_dates.append(f"{int(i) + 2}행: {r['경기날짜']!r}")
+            continue
         temp = float(r["기온"]) if "기온" in sched.columns and pd.notna(r.get("기온")) else default_temp
         rain = float(r["강수"]) if "강수" in sched.columns and pd.notna(r.get("강수")) else default_rain
         hum = float(r["습도"]) if "습도" in sched.columns and pd.notna(r.get("습도")) else default_hum
@@ -220,7 +298,15 @@ def build_features_from_schedule(
                 cap_map=cap_map,
             )
         )
+    if bad_dates:
+        raise ValueError("날짜 파싱 실패:\n" + "\n".join(bad_dates[:8]))
+    if not rows:
+        raise ValueError("유효한 경기 행이 없습니다.")
     feat = pd.DataFrame(rows)
+    feat["clip_capacity"] = [
+        venue_clip_capacity(str(r["구장"]), str(r["홈팀"]), cap_map)
+        for _, r in sched.iterrows()
+    ]
     if "관중수" in sched.columns:
         feat["관중수"] = pd.to_numeric(sched["관중수"], errors="coerce")
     return feat

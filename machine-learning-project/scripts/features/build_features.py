@@ -168,9 +168,14 @@ def add_season_form_and_draw_proxy(df: pd.DataFrame) -> pd.DataFrame:
     )
     hs: dict[tuple[int, str], float] = defaultdict(float)
     hc: dict[tuple[int, str], int] = defaultdict(int)
+    hs_v: dict[tuple[int, str, str], float] = defaultdict(float)
+    hc_v: dict[tuple[int, str, str], int] = defaultdict(int)
     vs: dict[tuple[int, str], float] = defaultdict(float)
     vc: dict[tuple[int, str], int] = defaultdict(int)
     home_hist: dict[tuple[int, str], deque[float]] = defaultdict(lambda: deque(maxlen=FORM_LAST_N_GAMES))
+    home_hist_v: dict[tuple[int, str, str], deque[float]] = defaultdict(
+        lambda: deque(maxlen=FORM_LAST_N_GAMES)
+    )
     away_hist: dict[tuple[int, str], deque[float]] = defaultdict(lambda: deque(maxlen=FORM_LAST_N_GAMES))
     mu_s: dict[tuple[str, str], float] = defaultdict(float)   # [수정6] matchup 누적합
     mu_c: dict[tuple[str, str], int] = defaultdict(int)        # [수정6] matchup 누적수
@@ -184,9 +189,17 @@ def add_season_form_and_draw_proxy(df: pd.DataFrame) -> pd.DataFrame:
         v = str(row["방문팀"])
         att = float(row["관중수"])
         kh, kv = (y, h), (y, v)
+        actual_venue = (
+            str(row["구장_actual"])
+            if "구장_actual" in work.columns and pd.notna(row.get("구장_actual"))
+            else str(row["구장"])
+        )
+        hvk = (y, h, actual_venue)
 
-        # [수정1] cold-start → 전 시즌 팀 평균
-        if hc[kh] > 0:
+        # [수정1] cold-start → 전 시즌 팀 평균 (홈: 구장별 우선, 없으면 팀 전체)
+        if hc_v[hvk] > 0:
+            h_prior = hs_v[hvk] / hc_v[hvk]
+        elif hc[kh] > 0:
             h_prior = hs[kh] / hc[kh]
         else:
             h_prior = prev_home_mean.get((y - 1, h), np.nan)
@@ -196,11 +209,14 @@ def add_season_form_and_draw_proxy(df: pd.DataFrame) -> pd.DataFrame:
         else:
             v_prior = prev_away_mean.get((y - 1, v), np.nan)
 
-        h5 = (
-            float(np.mean(home_hist[kh]))
-            if home_hist[kh]
-            else (h_prior if pd.notna(h_prior) else np.nan)
-        )
+        if home_hist_v[hvk]:
+            h5 = float(np.mean(home_hist_v[hvk]))
+        elif actual_venue in SECONDARY_STADIUM_NAMES:
+            h5 = h_prior if pd.notna(h_prior) else np.nan
+        elif home_hist[kh]:
+            h5 = float(np.mean(home_hist[kh]))
+        else:
+            h5 = h_prior if pd.notna(h_prior) else np.nan
         v5 = (
             float(np.mean(away_hist[kv]))
             if away_hist[kv]
@@ -238,9 +254,12 @@ def add_season_form_and_draw_proxy(df: pd.DataFrame) -> pd.DataFrame:
 
         hs[kh] += att
         hc[kh] += 1
+        hs_v[hvk] += att
+        hc_v[hvk] += 1
         vs[kv] += att
         vc[kv] += 1
         home_hist[kh].append(att)
+        home_hist_v[hvk].append(att)
         away_hist[kv].append(att)
         mu_s[mu_key] += att
         mu_c[mu_key] += 1
@@ -409,17 +428,14 @@ def _add_stadium_capacity_and_clip(df: pd.DataFrame, df_stadium: pd.DataFrame) -
 
 
 def _merge_secondary_stadium_for_ohe(df: pd.DataFrame, df_stadium: pd.DataFrame) -> pd.DataFrame:
-    """정원 조인 후: 대체 구장은 OHE·정원 피처를 홈팀 본구장 기준으로 맞춤."""
-    st_max_table = _stadium_capacity_table(df_stadium)
+    """대체 구장: OHE용 구장만 본구장으로, 정원·관중은 실제 개최지(구장_actual) 유지."""
     actual = df["구장"].astype(str).str.strip()
     home = df["홈팀"].astype(str).str.strip()
     mask = actual.isin(SECONDARY_STADIUM_NAMES)
     canonical = home.map(HOME_STADIUM_BY_TEAM).fillna(actual)
     df["구장_actual"] = actual
     df["구장"] = np.where(mask, canonical, actual)
-    if not st_max_table.empty:
-        main_cap = canonical.map(st_max_table)
-        df["stadium_capacity"] = np.where(mask, main_cap, df["stadium_capacity"])
+    # stadium_capacity는 _add_stadium_capacity_and_clip 에서 실제 구장명으로 이미 매핑됨
     return df
 
 
