@@ -25,8 +25,11 @@
 | `data/raw/kbo_*_attendance.csv` | 연도별 관중 원시 |
 | `data/interim/kbo_*_attendance_weather.csv` | 관중 + 기상 |
 | `data/processed/kbo_train_ready.csv` | 학습용 피처 테이블 |
-| `models/attendance_rf_pipeline.joblib` | 학습된 RF 파이프라인 |
+| `models/attendance_rf_pipeline.joblib` | RandomForest |
+| `models/attendance_lgbm_pipeline.joblib` | LightGBM (선택) |
+| `models/attendance_xgb_pipeline.joblib` | XGBoost (선택) |
 | `models/train_report.json`, `eval_report.json` | 학습·평가 리포트 |
+| `reports/modeling/model_benchmark.json` | 3모델 벤치마크 비교 |
 
 ---
 
@@ -85,9 +88,10 @@ Machine-Learning-Project/
         ↓
 [build_features.py]            →  data/processed/kbo_train_ready.csv
         ↓
-[train_model.py]               →  models/attendance_rf_pipeline.joblib
+[train_model.py]               →  models/attendance_rf_pipeline.joblib  (RF만)
+[benchmark_models.py]          →  RF + LGBM + XGB .joblib 한 번에 (3개 권장)
         ↓
-[evaluate_model.py]            →  models/eval_report.json
+[evaluate_model.py]            →  models/eval_report.json  (RF 기준)
         ↓
 [streamlit_app.py]             →  🌐 웹 UI (예측·혼잡도·동네예보 참고)
 ```
@@ -315,6 +319,49 @@ python scripts/modeling/tune_hyperparams.py --n-trials 50
 
 ---
 
+### 🤖 RF · LightGBM · XGBoost (3개 모델)
+
+**3개를 따로따로 학습할 필요 없습니다.** 한 스크립트가 RF → LGBM → XGB를 순서대로 학습·저장합니다.
+
+| 목적 | 명령 | 생성 파일 |
+|------|------|-----------|
+| **RF만** 학습 | `train_model.py` | `attendance_rf_pipeline.joblib` |
+| **3개 한 번에** 학습·비교 | `benchmark_models.py` | RF + LGBM + XGB `.joblib`, `model_benchmark.json` |
+
+**사전 조건:** `data/processed/kbo_train_ready.csv` 존재 (`build_features.py` 완료 또는 저장소 포함 데이터)
+
+**Windows (PowerShell)**
+
+```powershell
+cd machine-learning-project
+.\.venv\Scripts\Activate.ps1
+pip install -e ".[benchmark]"
+python scripts\modeling\benchmark_models.py
+```
+
+**macOS**
+
+```bash
+cd machine-learning-project
+source .venv/bin/activate
+pip install -e ".[benchmark]"
+python3 scripts/modeling/benchmark_models.py
+```
+
+`best_params.json` / `best_lgbm_params.json` / `best_xgb_params.json` 이 있으면 자동 반영됩니다. 없으면 기본 하이퍼파라미터로 학습합니다.
+
+**Streamlit에서 3개 다 쓰기**
+
+1. `streamlit run scripts/app/streamlit_app.py` (또는 Windows: `scripts\app\streamlit_app.py`)
+2. 사이드바 **ML 알고리즘**에서 **RandomForest · LightGBM · XGBoost** 모두 체크
+3. 여러 모델을 켜면 경기당 **예측 관중수는 평균**으로 표시 (단일 경기·CSV 모드 동일)
+
+체크박스가 비활성화되면 해당 `.joblib`이 없는 것 → 위 `benchmark_models.py` 실행.
+
+> 저장소에 이미 3개 `.joblib`이 커밋되어 있으면 **학습 없이** Streamlit에서 바로 3개 선택 가능합니다.
+
+---
+
 ### Streamlit 웹앱 실행 (로컬)
 
 | OS | 명령 |
@@ -456,8 +503,9 @@ STREAMLIT_WEB_RECENT = "0"
 - **검증**: `연도`·`월`·`주차_ISO` 시간 순 홀드아웃 — 테스트 **2025.7~10**
 - **타겟**: `log1p(관중수)` 학습 → 예측 시 역변환
 - **튜닝**: Optuna + TimeSeriesSplit → `models/best_params.json`(RF), `best_lgbm_params.json`, `best_xgb_params.json`
-- **앱 기본 저장 모델**: RandomForest (`models/attendance_rf_pipeline.joblib`) — `train_model.py` 실행 시 `best_params.json` 자동 적용
-- **UI 선택**: LightGBM / XGBoost (`benchmark_models.py`로 저장, Streamlit·CSV에서 체크박스)
+- **앱 기본 체크**: RandomForest — UI에서 LGBM·XGB 추가 선택 가능
+- **3개 파일**: `attendance_rf_pipeline.joblib`, `attendance_lgbm_pipeline.joblib`, `attendance_xgb_pipeline.joblib` — **`benchmark_models.py` 1회**로 일괄 생성
+- **RF만 갱신**: `train_model.py` (LGBM/XGB는 변경되지 않음)
 
 ### 최종 벤치마크 (동일 테스트 287경기)
 
@@ -495,25 +543,21 @@ STREAMLIT_WEB_RECENT = "0"
 
 ### 재현 명령
 
-**macOS**
+**3개 모델까지 (권장)**
 
 ```bash
 cd machine-learning-project
-export PYTHONPATH=scripts
-python3 scripts/modeling/train_model.py
-python3 scripts/modeling/evaluate_model.py
-python3 scripts/modeling/benchmark_models.py   # xgboost: pip install -e '.[benchmark]'
+pip install -e ".[benchmark]"
+# macOS: python3  |  Windows: python
+python3 scripts/modeling/benchmark_models.py
 ```
 
-**Windows (PowerShell)**
+**RF만 + 평가 리포트**
 
-```powershell
-cd machine-learning-project
-$env:PYTHONPATH = "scripts"
-python scripts/modeling/train_model.py
-python scripts/modeling/evaluate_model.py
-python scripts/modeling/benchmark_models.py
-```
+| OS | 명령 |
+|----|------|
+| macOS | `export PYTHONPATH=scripts` 후 `train_model.py` → `evaluate_model.py` |
+| Windows | `$env:PYTHONPATH = "scripts"` 후 `train_model.py` → `evaluate_model.py` |
 
 주요 피처: `matchup_prior_mean_att`, `home_last5_mean_att`, `stadium_capacity`, `구장_actual`, 요일·승률·페넌트·기상 버킷 등 (`build_features.py`).
 
