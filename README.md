@@ -14,181 +14,165 @@
 - **피처:** 승률·페넌트·매치업·최근 5경기·시즌 진행률·기상 버킷 등
 - **모델:** RandomForest(기본) · LightGBM · XGBoost (사이드바에서 선택·평균 앙상블)
 
-repo에 데이터·`.joblib`가 있으면 **수집·학습 없이 Streamlit만** 실행할 수 있습니다.
+repo에 데이터·`.joblib`가 있으면 **수집·학습 없이 웹앱만** 실행할 수 있습니다.
 
 ### 📦 저장소에 포함된 것 (앱만 켤 때)
 
-`machine-learning-project/` 기준:
+경로는 모두 `machine-learning-project/` 아래입니다.
 
 | 경로 | 설명 |
 |------|------|
-| `data/processed/kbo_train_ready.csv` | 학습용 피처 테이블 |
+| `data/processed/kbo_train_ready.csv` | 학습용 피처 |
 | `models/attendance_rf_pipeline.joblib` | RandomForest |
 | `models/attendance_lgbm_pipeline.joblib` | LightGBM |
 | `models/attendance_xgb_pipeline.joblib` | XGBoost |
-| `data/raw/`, `data/interim/`, `data/external/` | 관중·기상·구장·순위 등 |
 
 ---
 
-## 📁 폴더 구조 (필수)
+## 📁 폴더 구조 — 꼭 읽기
+
+clone하면 **폴더가 두 단계**입니다.
 
 ```
-<clone-root>/                      ← git clone 루트 (README 위치)
-│                                    예: Machine-Learning-Project-1
+프로젝트 루트/                    ← README.md · requirements.txt (여기서 pip 설치)
 ├── README.md
-├── requirements.txt               ← Streamlit Cloud (루트 pip)
-├── packages.txt                   ← Linux apt 전용 (Windows 로컬 ❌)
-└── machine-learning-project/      ← ★ pip · streamlit · pytest · 스크립트
+├── requirements.txt
+├── packages.txt                  ← Streamlit Cloud용 (Windows 로컬 ❌)
+└── machine-learning-project/     ← pyproject.toml · data · models · scripts
     ├── pyproject.toml
     ├── data/
     ├── models/
-    ├── reports/
     ├── tests/
     └── scripts/
-        ├── app/streamlit_app.py
-        ├── common/
-        ├── data_collection/
-        ├── preprocessing/
-        ├── features/
-        ├── modeling/
-        └── eda/
+        └── app/streamlit_app.py   ← 웹앱 진입점
 ```
 
-> **주의:** `pyproject.toml`은 **루트가 아니라** `machine-learning-project/` 안에 있습니다.  
-> clone 루트에서 `pip install -e .` 하면 `pyproject.toml not found` 오류가 납니다.
+| 위치 | 하는 일 |
+|------|---------|
+| **프로젝트 루트** | `pip install -r requirements.txt` · `python -m streamlit run machine-learning-project\...` |
+| **machine-learning-project** | `pip install -e .` · 파이프라인 스크립트 · `pytest` |
 
----
-
-## 🪟 Windows · macOS 호환
-
-코드는 **`pathlib` 경로**·**UTF-8( BOM ) CSV**·**Selenium Chrome 폴백**으로 Windows/macOS 공통 설계입니다.
-
-| 구분 | Windows | macOS |
-|------|---------|-------|
-| 경로 | `\` · `pathlib` ✅ | `/` ✅ |
-| `pip install -e .` | `machine-learning-project`에서 실행 | 동일 |
-| Streamlit | ✅ (한글: Malgun·Nanum 폴백) | ✅ |
-| pytest | ✅ (`pip install -e ".[dev]"`) | ✅ |
-| Selenium 크롤 | **Google Chrome** + `webdriver-manager` | 동일 |
-| `packages.txt` | **사용 안 함** (Cloud/Linux) | 사용 안 함 |
-| EDA 차트 한글 | ⚠️ `run_eda.py`만 `AppleGothic` 고정 → PNG 한글 깨질 수 있음 | ✅ |
-| EDA 요약 `eda_summary.md` | ✅ | ✅ |
+> ❌ **프로젝트 루트**에서 `pip install -e .` → `pyproject.toml not found`  
+> ❌ **프로젝트 루트**에서 `streamlit run scripts\app\...` → `scripts` 폴더 없음 (하위 폴더 경로 필요)  
+> ❌ `python streamlit_app.py` (IDE ▶ 실행) → Streamlit 경고·브라우저 안 열림 → **`streamlit run` 필수**
 
 ---
 
 ## ⚡ 빠른 시작
 
-**Python 3.10 ~ 3.12** 권장. 3.14 등 최신 버전은 일부 패키지(wheel) 호환 문제가 있을 수 있습니다.
+**Python 3.10 ~ 3.12** 권장.
 
-### 1) 설치 (한 번)
+### 1) 설치 (프로젝트 루트)
 
-**Windows (PowerShell)** — `<clone-root>`를 실제 클론 폴더로 바꿉니다.
+**README.md가 있는 폴더**로 이동한 뒤:
+
+**Windows (PowerShell)**
 
 ```powershell
-cd <clone-root>\machine-learning-project
+cd C:\경로\Machine-Learning-Project
 python -m pip install -U pip
-pip install -e .
+pip install -r requirements.txt
 ```
 
 **macOS**
 
 ```bash
-cd <clone-root>/machine-learning-project
+cd ~/경로/Machine-Learning-Project
 pip3 install -U pip
-pip3 install -e .
+pip3 install -r requirements.txt
 ```
 
-| 항목 | 설명 |
-|------|------|
-| `pip install -e .` | `machine-learning-project`를 현재 Python에 설치 (`common`, `modeling` 등 import 가능) |
-| 가상환경 | **필수 아님** — 패키지 충돌 시 [선택: venv](#-선택-가상환경-venv) |
-| PowerShell 5.x | `&&` 대신 **한 줄씩** 또는 `;` (7+만 `&&`) |
+`requirements.txt`가 `machine-learning-project` 패키지를 editable로 설치합니다 (`-e ./machine-learning-project`).
 
-### 2) Streamlit 실행
+**대안** — `machine-learning-project` 안에서만 설치하고 싶을 때:
+
+```powershell
+cd machine-learning-project
+pip install -e .
+```
+
+### 2) Streamlit 실행 (프로젝트 루트)
+
+`streamlit` 명령이 없을 수 있으므로 **`python -m streamlit`** 을 기본으로 씁니다.
 
 **Windows**
 
 ```powershell
-cd <clone-root>\machine-learning-project
-streamlit run scripts\app\streamlit_app.py
+cd C:\경로\Machine-Learning-Project
+python -m streamlit run machine-learning-project\scripts\app\streamlit_app.py
 ```
 
 **macOS**
 
 ```bash
-cd <clone-root>/machine-learning-project
-streamlit run scripts/app/streamlit_app.py
+cd ~/경로/Machine-Learning-Project
+python3 -m streamlit run machine-learning-project/scripts/app/streamlit_app.py
 ```
 
 - 브라우저: `http://localhost:8501`
-- `streamlit` 없음: `python -m streamlit run scripts/app/streamlit_app.py`
+- `streamlit`이 PATH에 있으면: `streamlit run machine-learning-project\scripts\app\streamlit_app.py` 도 가능
 - 사이드바 **ML 알고리즘:** RF · LGBM · XGB 체크 → 예측 **평균**
 
 ### 3) (선택) 테스트
 
 ```powershell
-# Windows — machine-learning-project 폴더
-pip install -e ".[dev]"
+# 프로젝트 루트
+pip install -e "./machine-learning-project[dev]"
+cd machine-learning-project
 python -m pytest
-```
-
-```bash
-# macOS
-pip install -e ".[dev]"
-pytest
 ```
 
 ---
 
-## 🤖 모델 학습 (3개 한 번에)
+## 🪟 Windows · macOS
 
-**3번 따로 학습할 필요 없음.** `benchmark_models.py` 한 번으로 RF · LGBM · XGB `.joblib` 생성.
+| 구분 | Windows | macOS |
+|------|---------|-------|
+| 설치 (권장) | 루트 `pip install -r requirements.txt` | 동일 |
+| 웹앱 실행 | `python -m streamlit run machine-learning-project\scripts\app\streamlit_app.py` | `python3 -m streamlit run ...` |
+| 파이프라인 | `cd machine-learning-project` 후 `python scripts\...` | `python3 scripts/...` |
+| Selenium | Google Chrome + `webdriver-manager` | 동일 |
+| `packages.txt` | 사용 안 함 | 사용 안 함 |
+| EDA PNG 한글 | `run_eda.py` → `AppleGothic` (맥 전용) · 깨질 수 있음 | ✅ |
+
+---
+
+## 🤖 모델 학습 (RF · LGBM · XGB)
+
+`benchmark_models.py` **한 번**으로 3개 `.joblib` 생성.
 
 ```powershell
-# Windows
-cd <clone-root>\machine-learning-project
-pip install -e ".[benchmark]"
+# 프로젝트 루트
+pip install -e "./machine-learning-project[benchmark]"
+cd machine-learning-project
 python scripts\modeling\benchmark_models.py
-```
-
-```bash
-# macOS
-pip install -e ".[benchmark]"
-python3 scripts/modeling/benchmark_models.py
 ```
 
 | 목적 | 스크립트 |
 |------|----------|
 | RF만 | `scripts/modeling/train_model.py` |
-| 3개 + 벤치마크 | `scripts/modeling/benchmark_models.py` |
-| RF 평가 | `scripts/modeling/evaluate_model.py` (선택) |
-| 하이퍼튜닝 | `scripts/modeling/tune_hyperparams.py` (선택) |
+| 3개 + 비교 | `scripts/modeling/benchmark_models.py` |
 
-**벤치마크 (테스트 287경기, MAE):** Dummy 4,671 → RF **1,964** → LGBM **1,911** → XGB 1,928 · R² LGBM **0.77**
+**벤치마크 MAE:** Dummy 4,671 → RF 1,964 → LGBM **1,911** → XGB 1,928
 
 ---
 
-## 🔄 전체 파이프라인 (처음부터)
+## 🔄 전체 파이프라인
 
-`machine-learning-project`에서 실행. `pip install -e .` 후 **`PYTHONPATH`는 보통 불필요**합니다.
+**`machine-learning-project` 폴더**에서 실행 (`pip install`은 이미 완료된 상태).
 
 | 단계 | 스크립트 | 비고 |
 |------|----------|------|
-| 1 | `data_collection/kbo_scraping.py` | Chrome + Selenium |
-| 1 | `data_collection/kbo_standings_scrape.py` | HTTP만 (Selenium ❌) |
-| 2 | `data_collection/kbo_size.py` | 구장 정원 CSV |
-| 3 | `data_collection/weather_api.py` | `KMA_APIHUB_AUTH_KEY` |
-| 4 | `preprocessing/preprocess_attendance_weather.py` | |
-| 5 | `features/build_features.py` | |
-| 6 | `eda/run_eda.py` | 선택 · Windows PNG 한글 주의 |
-| 7 | `modeling/train_model.py` 또는 `benchmark_models.py` | |
-| 8 | `modeling/evaluate_model.py` | 선택 (RF) |
+| 1 | `kbo_scraping.py`, `kbo_standings_scrape.py` | Chrome (전자만) |
+| 2 | `kbo_size.py` | |
+| 3 | `weather_api.py` | `KMA_APIHUB_AUTH_KEY` |
+| 4~8 | preprocess → features → (eda) → train/benchmark → (evaluate) | |
 
-**Windows (PowerShell) 예시**
+**Windows 예시**
 
 ```powershell
-cd <clone-root>\machine-learning-project
-$env:KMA_APIHUB_AUTH_KEY = "your_key"   # 3단계만
+cd machine-learning-project
+$env:KMA_APIHUB_AUTH_KEY = "your_key"
 
 python scripts\data_collection\kbo_scraping.py
 python scripts\data_collection\kbo_standings_scrape.py
@@ -199,71 +183,34 @@ python scripts\features\build_features.py
 python scripts\modeling\benchmark_models.py
 ```
 
-**macOS 예시**
-
-```bash
-cd <clone-root>/machine-learning-project
-export KMA_APIHUB_AUTH_KEY="your_key"
-
-python3 scripts/data_collection/kbo_scraping.py
-# ... 동일 순서
-python3 scripts/modeling/benchmark_models.py
-```
-
-**Selenium (Windows):** `kbo_scraping.py`는 Linux `/usr/bin/chromium`을 찾지 못하면 **로컬 Chrome + `webdriver-manager`** 를 씁니다. [Google Chrome](https://www.google.com/chrome/) 설치 필요.
-
 ---
 
 ## 🔑 환경 변수 · Secrets
 
 | 변수 | 용도 |
 |------|------|
-| `KMA_APIHUB_AUTH_KEY` | `weather_api.py`(관측) · Streamlit 동네예보(typ02) |
-| `STREAMLIT_WEB_RECENT=0` | KBO 최근 5경기 자동 크롤 끔 |
-| `STREAMLIT_DEBUG_WEATHER=1` | 동네예보 API 디버그 패널 |
+| `KMA_APIHUB_AUTH_KEY` | 기상 API · 동네예보 |
+| `STREAMLIT_WEB_RECENT=0` | 최근 5경기 크롤 끔 |
 
-| OS | 설정 예 |
-|----|---------|
-| Windows (PowerShell) | `$env:KMA_APIHUB_AUTH_KEY = "키"` |
-| Windows (cmd) | `set KMA_APIHUB_AUTH_KEY=키` |
-| macOS | `export KMA_APIHUB_AUTH_KEY="키"` |
+Windows: `$env:KMA_APIHUB_AUTH_KEY = "키"` · macOS: `export KMA_APIHUB_AUTH_KEY="키"`
 
-- **로컬:** `machine-learning-project/.streamlit/secrets.toml`
-- **Cloud:** 앱 Settings → Secrets
-
-```toml
-KMA_APIHUB_AUTH_KEY = "발급받은_키"
-```
+로컬: `machine-learning-project/.streamlit/secrets.toml`
 
 ---
 
-## 📦 선택: 가상환경 (venv)
+## 📦 선택: 가상환경
 
-다른 과제와 **pandas / scikit-learn** 버전이 섞일 때만 사용합니다.
-
-**Windows**
+**프로젝트 루트**에 venv를 두는 예:
 
 ```powershell
-cd <clone-root>\machine-learning-project
+cd C:\경로\Machine-Learning-Project
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -U pip
-pip install -e .
-pip install -e ".[dev]"
-streamlit run scripts\app\streamlit_app.py
+pip install -r requirements.txt
+python -m streamlit run machine-learning-project\scripts\app\streamlit_app.py
 ```
 
-**macOS**
-
-```bash
-cd <clone-root>/machine-learning-project
-python3.12 -m venv .venv
-source .venv/bin/activate
-pip install -e .
-streamlit run scripts/app/streamlit_app.py
-```
-
-`Activate.ps1` 거부 시: `Set-ExecutionPolicy RemoteSigned -Scope CurrentUser` 또는 **cmd** + `.venv\Scripts\activate.bat`
+`Activate.ps1` 오류: `Set-ExecutionPolicy RemoteSigned -Scope CurrentUser` 또는 cmd + `.venv\Scripts\activate.bat`
 
 ---
 
@@ -271,21 +218,15 @@ streamlit run scripts/app/streamlit_app.py
 
 | 증상 | 해결 |
 |------|------|
-| `pyproject.toml not found` | **`machine-learning-project`로 `cd`** 후 `pip install -e .` |
-| `ModuleNotFoundError: common` / `modeling` | 위 폴더에서 `pip install -e .` |
-| `cd Machine-Learning-Project\...` 실패 | 이미 clone 루트면 `cd machine-learning-project` 만 |
-| `python` 없음 (Windows) | `py -3.12` 사용 |
-| `streamlit` 없음 | `python -m streamlit run scripts/app/streamlit_app.py` |
-| PowerShell `&&` 오류 | 줄 단위 실행 또는 `;` |
-| RF/LGBM/XGB 체크박스 비활성 | 해당 `.joblib` 없음 → `benchmark_models.py` 또는 `train_model.py` |
-| 크롤링 실패 | Chrome 설치 · 방화벽 · `STREAMLIT_WEB_RECENT=0`으로 앱만 사용 |
-
-**루트에서 Cloud와 동일 설치 (선택)**
-
-```powershell
-cd <clone-root>
-pip install -r requirements.txt
-```
+| `pyproject.toml not found` / `does not appear to be a Python project` | 루트에서 **`pip install -r requirements.txt`** (❌ `pip install -e .`) |
+| `streamlit` is not recognized | **`python -m streamlit run ...`** |
+| `scripts\app` 경로 없음 | 루트에 `scripts` 없음 → **`machine-learning-project\scripts\app\...`** |
+| `missing ScriptRunContext` / `bare mode` | IDE에서 `python streamlit_app.py` 실행 중 → **`python -m streamlit run`** 사용 |
+| `ModuleNotFoundError: common` | `pip install -r requirements.txt` (루트) 또는 `pip install -e .` (`machine-learning-project`) |
+| `python` 없음 | `py -3.12 -m pip install -r requirements.txt` |
+| PowerShell `&&` 오류 | 한 줄씩 또는 `;` |
+| RF/LGBM/XGB 비활성 | `.joblib` 없음 → `benchmark_models.py` |
+| EDA 한글 □□□ (Windows) | `eda_summary.md`는 정상 · PNG만 `run_eda.py` 폰트 이슈 |
 
 ---
 
@@ -293,70 +234,27 @@ pip install -r requirements.txt
 
 | 항목 | 값 |
 |------|-----|
-| Repository | `enzun123/Machine-Learning-Project` |
 | Main file | `machine-learning-project/scripts/app/streamlit_app.py` |
-| Branch | `main` (또는 `develop`) |
-| Python | **3.12** 권장 |
+| Python | 3.12 권장 |
 
-- 루트 `requirements.txt` — `pip install -e ./machine-learning-project`
-- 루트 `packages.txt` — `fonts-nanum`, `chromium`, `chromium-driver` (**Linux 전용**, Windows 로컬과 무관)
-- Secrets: `KMA_APIHUB_AUTH_KEY` (선택)
-
-| 기능 | 로컬 | Cloud |
-|------|------|-------|
-| RF/LGBM/XGB 예측 | ✅ | ✅ |
-| 동네예보 | API 키 필요 | Secrets |
-| KBO 최근 5경기 크롤 | Chrome (기본 ON) | Chromium (`packages.txt`) · 불안정 시 `STREAMLIT_WEB_RECENT=0` |
+루트 `requirements.txt` · `packages.txt`(Linux). Secrets: `KMA_APIHUB_AUTH_KEY` (선택).
 
 ---
 
-## 🖥️ Streamlit UI 요약
+## 📊 주요 스크립트 · 브랜치 · 팀
 
-| 기능 | 설명 |
-|------|------|
-| 사이드바 입력 | 날짜·구장·팀·기온·강수·습도 |
-| ML 알고리즘 | RF / LGBM / XGB 다중 선택 → **평균** |
-| 혼잡도 | 수용률 → LOW / NORMAL / HIGH + 운영 안내 |
-| CSV 일괄 예측 | `csv_batch_predict_ui.py` — 일정 CSV 업로드 |
-| 동네예보 | 개시 3시간 전 RN1/POP (예측값과 분리) |
-| 최근 5경기 | Selenium (로컬 Chrome / Cloud chromium) |
-
-> **2026·미래 일정:** 모델은 2024–25 시즌 학습. 분포가 다르면 오차가 커질 수 있습니다.
-
----
-
-## 📊 주요 스크립트
-
-| 경로 (`scripts/`) | 역할 |
-|-------------------|------|
+| `scripts/` | 역할 |
+|------------|------|
 | `app/streamlit_app.py` | 메인 웹앱 |
-| `app/csv_batch_predict_ui.py` | CSV 일괄 예측 UI |
-| `modeling/benchmark_models.py` | 3모델 학습·비교 |
-| `modeling/train_model.py` | RF 파이프라인 |
-| `modeling/batch_predict.py` | 배치 추론 |
-| `features/build_features.py` | 학습 피처 |
-| `data_collection/kbo_scraping.py` | 관중 크롤 (Selenium) |
-| `data_collection/weather_api.py` | 기상 관측 API |
-| `common/kma_vilage_fcst.py` | 동네예보 typ02 |
-| `common/congestion_levels.py` | 혼잡도 구간 |
-| `eda/run_eda.py` | EDA 리포트·차트 |
-
----
-
-## 🌿 Git 브랜치
+| `modeling/benchmark_models.py` | 3모델 학습 |
+| `features/build_features.py` | 피처 |
+| `data_collection/kbo_scraping.py` | 관중 크롤 |
 
 | 브랜치 | 용도 |
 |--------|------|
-| `main` | Streamlit Cloud 배포 |
+| `main` | Cloud 배포 |
 | `develop` | 기능 통합 |
-| `feat/*` | 기능별 개발 |
 
----
-
-## 👥 팀 · 문의
-
-| 역할 | 이름 |
-|------|------|
 | 팀장 | 허은준 (enzun123) — enzun123@gmail.com |
 | 팀원 | 김지원, 이승민, 최종원 |
 
