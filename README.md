@@ -344,6 +344,23 @@ python scripts/modeling/tune_hyperparams.py --n-trials 50
 - 로컬 secrets: `machine-learning-project/.streamlit/secrets.toml` (macOS·Windows 동일)
 - Cloud secrets: 앱 설정 → Secrets에 동일 키 추가
 
+### 스모크 테스트 (pytest)
+
+Chrome·기상 API 없이 **macOS / Windows 동일**하게 실행합니다 (`pathlib` 경로, 네트워크 미사용).
+
+```bash
+cd machine-learning-project
+pip install -e ".[dev]"
+pytest
+```
+
+Windows (PowerShell)도 동일 (`python -m pytest` 가능).
+
+| 포함 검증 | 내용 |
+|-----------|------|
+| `tests/test_smoke_common.py` | 혼잡도·구장 별칭·날짜 파싱·API 키 마스킹 등 |
+| `tests/test_smoke_data.py` | 커밋된 CSV·모델·`train_report.json`, `load_training_table` |
+
 ---
 
 ## ☁️ Streamlit Cloud 배포

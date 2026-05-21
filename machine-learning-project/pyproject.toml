@@ -29,3 +29,8 @@ benchmark = ["xgboost>=2.0"]
 
 [tool.setuptools.packages.find]
 where = ["scripts"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["scripts"]
+addopts = "-q"
