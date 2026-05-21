@@ -96,74 +96,231 @@ Machine-Learning-Project/
 
 ## 🚀 실행 방법
 
-### 사전 준비
+### 공통 요구사항
 
-**권장: editable 설치**
+| 항목 | 내용 |
+|------|------|
+| Python | **3.10+** (로컬 권장 **3.11~3.12** / Streamlit Cloud **3.12**) |
+| 저장소 클론 | `git clone` 후 프로젝트 루트(`Machine-Learning-Project/`)에서 작업 |
+| 크롤링·최근 경기 | **Google Chrome + Selenium** (`webdriver-manager`가 드라이버 자동 설치) |
+| 기상 API | 환경변수 **`KMA_APIHUB_AUTH_KEY`** ([기상 API 설정](#-기상-api-설정)) |
+| 앱만 실행 | [저장소에 포함된 데이터](#-저장소에-포함된-데이터-학습앱-생략-가능)가 있으면 수집·학습 생략 가능 |
+
+아래 **macOS** / **Windows** 중 해당 OS 절차를 따른 뒤, [권장 실행 순서](#권장-실행-순서) 또는 [Streamlit 웹앱](#streamlit-웹앱-실행-로컬)으로 진행합니다.
+
+---
+
+### macOS 설정
+
+#### 1. 가상환경·의존성 (권장)
 
 ```bash
-cd machine-learning-project
+cd Machine-Learning-Project/machine-learning-project
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -U pip
 pip install -e .
 ```
 
-또는 개별 설치:
+루트에서 Cloud와 동일하게 설치:
 
 ```bash
-pip install pandas numpy requests beautifulsoup4 selenium webdriver-manager \
-            scikit-learn joblib matplotlib seaborn streamlit optuna lightgbm
-```
-
-- Python **3.10+** (로컬 권장 **3.11~3.12** / Streamlit Cloud는 **3.12** 권장)
-- 크롤링·최근 경기 자동 반영: **Chrome + Selenium** (로컬)
-- 기상 API: 환경변수 **`KMA_APIHUB_AUTH_KEY`** (아래 [기상 API 설정](#-기상-api-설정) 참고)
-
-**루트에서 Cloud와 동일하게 설치하려면**
-
-```bash
+cd Machine-Learning-Project
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 권장 실행 순서
+#### 2. Chrome (Selenium)
+
+- [Google Chrome](https://www.google.com/chrome/) 설치
+- 최초 크롤링 시 `webdriver-manager`가 ChromeDriver를 자동으로 받습니다.
+
+#### 3. 환경 변수 (현재 터미널 세션)
+
+```bash
+export PYTHONPATH=scripts
+export KMA_APIHUB_AUTH_KEY="발급받은_키"   # 기상 API 사용 시
+```
+
+매번 설정하지 않으려면 `~/.zshrc` 등에 위 `export` 줄을 추가합니다.
+
+#### 4. Streamlit (macOS)
 
 ```bash
 cd machine-learning-project
-export PYTHONPATH=scripts   # Windows: set PYTHONPATH=scripts
-
-# 1) 원시 데이터 수집 (Selenium + Chrome 필요)
-python3 scripts/data_collection/kbo_scraping.py
-python3 scripts/data_collection/kbo_standings_scrape.py
-
-# 2) 구장 수용 인원 CSV 생성
-python3 scripts/data_collection/kbo_size.py
-
-# 3) 기상 데이터 병합 → interim (KMA_APIHUB_AUTH_KEY 필요)
-export KMA_APIHUB_AUTH_KEY="your_key_here"
-python3 scripts/data_collection/weather_api.py
-
-# 4) interim → final_dataset
-python3 scripts/preprocessing/preprocess_attendance_weather.py
-
-# 5) 피처 생성 → kbo_train_ready
-python3 scripts/features/build_features.py
-
-# 6) (선택) EDA 리포트 생성
-python3 scripts/eda/run_eda.py
-
-# 7) 모델 학습
-python3 scripts/modeling/train_model.py
-
-# 8) (선택) 평가 / 하이퍼파라미터 튜닝
-python3 scripts/modeling/evaluate_model.py
-python3 scripts/modeling/tune_hyperparams.py --n-trials 50
+source .venv/bin/activate   # 가상환경 사용 시
+export PYTHONPATH=scripts
+streamlit run scripts/app/streamlit_app.py
 ```
 
-> 💡 위 [저장소에 포함된 데이터](#-저장소에-포함된-데이터-학습앱-생략-가능)가 있으면 5~8단계(피처·학습·평가)부터 시작하거나 앱만 실행하면 됩니다.
+로컬 secrets (선택): `machine-learning-project/.streamlit/secrets.toml`
+
+```toml
+KMA_APIHUB_AUTH_KEY = "발급받은_키"
+```
+
+---
+
+### Windows 설정
+
+> 아래 예시는 `python` 기준입니다. `python3`가 없으면 `py -3.12` 등으로 바꿔 실행하세요.
+
+#### 1. 가상환경·의존성 (권장)
+
+**PowerShell** (프로젝트 루트 기준):
+
+```powershell
+cd Machine-Learning-Project\machine-learning-project
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -U pip
+pip install -e .
+```
+
+실행 정책 오류(`running scripts is disabled`)가 나면 **관리자 PowerShell**에서 한 번만:
+
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+```
+
+**명령 프롬프트(cmd)** 사용 시 활성화:
+
+```cmd
+cd Machine-Learning-Project\machine-learning-project
+python -m venv .venv
+.venv\Scripts\activate.bat
+python -m pip install -U pip
+pip install -e .
+```
+
+루트에서 Cloud와 동일하게 설치:
+
+```powershell
+cd Machine-Learning-Project
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+#### 2. Chrome (Selenium)
+
+- [Google Chrome](https://www.google.com/chrome/) 설치
+- `webdriver-manager`가 Chrome 버전에 맞는 드라이버를 자동 설치합니다.
+
+#### 3. 환경 변수
+
+**PowerShell** (현재 세션):
+
+```powershell
+$env:PYTHONPATH = "scripts"
+$env:KMA_APIHUB_AUTH_KEY = "발급받은_키"
+```
+
+**cmd** (현재 세션):
+
+```cmd
+set PYTHONPATH=scripts
+set KMA_APIHUB_AUTH_KEY=발급받은_키
+```
+
+영구 설정: Windows **설정 → 시스템 → 정보 → 고급 시스템 설정 → 환경 변수**에서 `PYTHONPATH`(값: `scripts`, 작업 디렉터리는 `machine-learning-project` 기준) 또는 사용자 변수로 `KMA_APIHUB_AUTH_KEY` 추가.
+
+#### 4. Streamlit (Windows)
+
+**PowerShell:**
+
+```powershell
+cd machine-learning-project
+.\.venv\Scripts\Activate.ps1
+$env:PYTHONPATH = "scripts"
+streamlit run scripts/app/streamlit_app.py
+```
+
+**cmd:**
+
+```cmd
+cd machine-learning-project
+.venv\Scripts\activate.bat
+set PYTHONPATH=scripts
+streamlit run scripts/app/streamlit_app.py
+```
+
+로컬 secrets (선택): `machine-learning-project\.streamlit\secrets.toml` (내용은 macOS와 동일)
+
+---
+
+### 권장 실행 순서
+
+`machine-learning-project` 폴더에서 실행합니다. OS별로 **Python 명령**과 **환경 변수**만 다릅니다.
+
+<details>
+<summary><b>macOS (bash / zsh)</b></summary>
+
+```bash
+cd machine-learning-project
+source .venv/bin/activate          # 가상환경 사용 시
+export PYTHONPATH=scripts
+export KMA_APIHUB_AUTH_KEY="your_key_here"   # 3단계 기상 API
+
+python3 scripts/data_collection/kbo_scraping.py
+python3 scripts/data_collection/kbo_standings_scrape.py
+python3 scripts/data_collection/kbo_size.py
+python3 scripts/data_collection/weather_api.py
+python3 scripts/preprocessing/preprocess_attendance_weather.py
+python3 scripts/features/build_features.py
+python3 scripts/eda/run_eda.py                    # 선택
+python3 scripts/modeling/train_model.py
+python3 scripts/modeling/evaluate_model.py        # 선택
+python3 scripts/modeling/tune_hyperparams.py --n-trials 50   # 선택
+```
+
+</details>
+
+<details>
+<summary><b>Windows (PowerShell)</b></summary>
+
+```powershell
+cd machine-learning-project
+.\.venv\Scripts\Activate.ps1
+$env:PYTHONPATH = "scripts"
+$env:KMA_APIHUB_AUTH_KEY = "your_key_here"
+
+python scripts/data_collection/kbo_scraping.py
+python scripts/data_collection/kbo_standings_scrape.py
+python scripts/data_collection/kbo_size.py
+python scripts/data_collection/weather_api.py
+python scripts/preprocessing/preprocess_attendance_weather.py
+python scripts/features/build_features.py
+python scripts/eda/run_eda.py
+python scripts/modeling/train_model.py
+python scripts/modeling/evaluate_model.py
+python scripts/modeling/tune_hyperparams.py --n-trials 50
+```
+
+</details>
+
+| 단계 | 스크립트 | 비고 |
+|------|----------|------|
+| 1 | `kbo_scraping.py`, `kbo_standings_scrape.py` | Chrome + Selenium |
+| 2 | `kbo_size.py` | 구장 수용 인원 CSV |
+| 3 | `weather_api.py` | `KMA_APIHUB_AUTH_KEY` 필요 |
+| 4 | `preprocess_attendance_weather.py` | → `final_dataset.csv` |
+| 5 | `build_features.py` | → `kbo_train_ready.csv` |
+| 6 | `run_eda.py` | 선택 |
+| 7 | `train_model.py` | RF 파이프라인 저장 |
+| 8 | `evaluate_model.py`, `tune_hyperparams.py` | 선택 |
+
+> 💡 [저장소에 포함된 데이터](#-저장소에-포함된-데이터-학습앱-생략-가능)가 있으면 5~8단계를 건너뛰거나 **Streamlit만** 실행해도 됩니다.
+
+---
 
 ### Streamlit 웹앱 실행 (로컬)
 
-```bash
-cd machine-learning-project
-streamlit run scripts/app/streamlit_app.py
-```
+| OS | 명령 |
+|----|------|
+| **macOS** | `export PYTHONPATH=scripts` 후 `streamlit run scripts/app/streamlit_app.py` |
+| **Windows** | `$env:PYTHONPATH="scripts"` 또는 `set PYTHONPATH=scripts` 후 동일 |
 
 **실행 전 권장 산출물**
 - `models/attendance_rf_pipeline.joblib` (`train_model.py`)
@@ -178,8 +335,14 @@ streamlit run scripts/app/streamlit_app.py
 | `STREAMLIT_WEB_RECENT` | `0`이면 KBO GraphDaily 최근 5경기 자동 수집 **끔** | 로컬 **켜짐**, Cloud **꺼짐** |
 | `STREAMLIT_DEBUG_WEATHER` | `1`이면 동네예보 API 디버그 패널 | 꺼짐 |
 
-- 로컬 secrets: `machine-learning-project/.streamlit/secrets.toml`에 `KMA_APIHUB_AUTH_KEY` 설정 가능.
-- Cloud secrets: 앱 설정 → Secrets에 동일 키 추가.
+| OS | 설정 예 |
+|----|---------|
+| macOS | `export STREAMLIT_WEB_RECENT=0` |
+| Windows (PowerShell) | `$env:STREAMLIT_WEB_RECENT = "0"` |
+| Windows (cmd) | `set STREAMLIT_WEB_RECENT=0` |
+
+- 로컬 secrets: `machine-learning-project/.streamlit/secrets.toml` (macOS·Windows 동일)
+- Cloud secrets: 앱 설정 → Secrets에 동일 키 추가
 
 ---
 
@@ -315,12 +478,24 @@ STREAMLIT_WEB_RECENT = "0"
 
 ### 재현 명령
 
+**macOS**
+
 ```bash
 cd machine-learning-project
 export PYTHONPATH=scripts
-python3 scripts/modeling/train_model.py      # RF + train_report.json
-python3 scripts/modeling/evaluate_model.py     # eval_report.json
-python3 scripts/modeling/benchmark_models.py   # 3모델 비교 (xgboost: pip install -e '.[benchmark]')
+python3 scripts/modeling/train_model.py
+python3 scripts/modeling/evaluate_model.py
+python3 scripts/modeling/benchmark_models.py   # xgboost: pip install -e '.[benchmark]'
+```
+
+**Windows (PowerShell)**
+
+```powershell
+cd machine-learning-project
+$env:PYTHONPATH = "scripts"
+python scripts/modeling/train_model.py
+python scripts/modeling/evaluate_model.py
+python scripts/modeling/benchmark_models.py
 ```
 
 주요 피처: `matchup_prior_mean_att`, `home_last5_mean_att`, `stadium_capacity`, `구장_actual`, 요일·승률·페넌트·기상 버킷 등 (`build_features.py`).
@@ -331,9 +506,11 @@ python3 scripts/modeling/benchmark_models.py   # 3모델 비교 (xgboost: pip in
 
 기상청 **API허브** 인증키는 코드에 하드코딩하지 않고 환경변수로 받습니다.
 
-```bash
-export KMA_APIHUB_AUTH_KEY="발급받은_키"
-```
+| OS | 설정 (현재 터미널) |
+|----|-------------------|
+| **macOS** | `export KMA_APIHUB_AUTH_KEY="발급받은_키"` |
+| **Windows (PowerShell)** | `$env:KMA_APIHUB_AUTH_KEY = "발급받은_키"` |
+| **Windows (cmd)** | `set KMA_APIHUB_AUTH_KEY=발급받은_키` |
 
 | 용도 | API | 사용 위치 |
 |------|-----|-----------|
