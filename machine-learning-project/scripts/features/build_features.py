@@ -21,6 +21,9 @@ import pandas as pd
 
 from common.config import (
     ATTENDANCE_CAP_CLIP_MULTIPLIER,
+    GWANGJU_STADIUM,
+    KIA_GWANGJU_EFFECTIVE_SEAT_CAP,
+    KIA_HOME_TEAM,
     DEFAULT_RH_MEDIAN_FALLBACK,
     DEFAULT_TEMP_MEDIAN_FALLBACK,
     DEFAULT_WIN_RATE,
@@ -424,6 +427,14 @@ def _add_stadium_capacity_and_clip(df: pd.DataFrame, df_stadium: pd.DataFrame) -
 
     # [수정8] 관중수 소프트 클리핑 (실제 개최 구장 정원 기준)
     cap_clip = df["stadium_capacity"].clip(lower=1.0) * ATTENDANCE_CAP_CLIP_MULTIPLIER
+    kia_gwangju = (df["홈팀"].astype(str).str.strip() == KIA_HOME_TEAM) & (
+        df["구장"].astype(str).str.strip() == GWANGJU_STADIUM
+    )
+    cap_clip = np.where(
+        kia_gwangju,
+        np.minimum(cap_clip, float(KIA_GWANGJU_EFFECTIVE_SEAT_CAP)),
+        cap_clip,
+    )
     df["관중수"] = df["관중수"].clip(upper=cap_clip)
     return df
 

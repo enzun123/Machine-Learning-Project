@@ -21,6 +21,11 @@ from common.stadium_capacity import (
     model_feature_capacity,
     venue_clip_capacity,
 )
+from common.config import (
+    DEFAULT_WIND_MEDIAN_FALLBACK,
+    WIND_BUCKET_EDGES,
+    WIND_BUCKET_LABELS,
+)
 from modeling.train_model import FEATURE_COLUMNS
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -42,6 +47,7 @@ _SCHEDULE_COLUMN_ALIASES: dict[str, list[str]] = {
     "기온": ["일평균기온(°C)", "일평균기온", "기온", "temp", "temperature"],
     "강수": ["일합계강수량(mm)", "일합계강수량", "강수", "rain", "rainfall_mm"],
     "습도": ["일평균상대습도(%)", "일평균상대습도", "습도", "hum", "humidity"],
+    "풍속": ["일평균풍속(m/s)", "일평균풍속", "풍속", "wind", "wind_mps"],
     "관중수": ["관중수", "관중", "attendance"],
 }
 
@@ -188,6 +194,38 @@ def _hum_bucket(h: float) -> str:
     return "Normal" if pd.isna(v) else str(v)
 
 
+def _wind_bucket(wind_mps: float) -> str:
+    s = pd.cut(
+        pd.Series([float(wind_mps)]),
+        bins=list(WIND_BUCKET_EDGES),
+        labels=list(WIND_BUCKET_LABELS),
+    )
+    v = s.iloc[0]
+    return "Calm" if pd.isna(v) else str(v)
+
+
+def filter_train_before_date(tr: pd.DataFrame, game_date) -> pd.DataFrame:
+    """추론 시점(game_date) 이전 경기만 사용 — 폼·prior 피처 시점 누수 방지."""
+    gdt = pd.Timestamp(game_date).normalize()
+    if "경기날짜" in tr.columns:
+        dates = pd.to_datetime(tr["경기날짜"], errors="coerce")
+        return tr.loc[dates < gdt].copy()
+    if {"연도", "월", "주차_ISO"}.issubset(tr.columns):
+        y = int(gdt.year)
+        m = int(gdt.month)
+        w = int(gdt.isocalendar().week)
+        yr = pd.to_numeric(tr["연도"], errors="coerce")
+        mo = pd.to_numeric(tr["월"], errors="coerce")
+        wk = pd.to_numeric(tr["주차_ISO"], errors="coerce")
+        before = (
+            (yr < y)
+            | ((yr == y) & (mo < m))
+            | ((yr == y) & (mo == m) & (wk < w))
+        )
+        return tr.loc[before.fillna(False)].copy()
+    return tr.copy()
+
+
 def _pick_template(tr: pd.DataFrame, home: str, away: str, stadium: str) -> pd.Series:
     g = tr.copy()
     g["_g"] = g["구장"].astype(str).replace(STADIUM_ALIAS)
@@ -222,14 +260,19 @@ def build_one_feature_row(
     rain_mm: float,
     hum_pct: float,
     cap_map: dict[str, int],
+    wind_mps: float | None = None,
 ) -> dict:
-    row = _pick_template(tr, home, away, stadium)
+    tr_hist = filter_train_before_date(tr, game_date)
+    if len(tr_hist) == 0:
+        tr_hist = tr
+    row = _pick_template(tr_hist, home, away, stadium)
     gdt = pd.Timestamp(game_date)
     wdn = int(gdt.dayofweek)
     st_actual = STADIUM_ALIAS.get(str(stadium).strip(), str(stadium).strip())
     st_key = stadium_for_model_ohe(st_actual, home)
     ml_cap = float(model_feature_capacity(stadium, home, cap_map))
     is_rain_i = int(float(rain_mm) > 0)
+    wind = float(wind_mps) if wind_mps is not None else float(DEFAULT_WIND_MEDIAN_FALLBACK)
 
     d = {c: row.get(c, np.nan) for c in FEATURE_COLUMNS}
     upd = {
@@ -246,6 +289,7 @@ def build_one_feature_row(
         "temp_bucket": _temp_bucket(temp_c),
         "is_hot": int(float(temp_c) >= 30),
         "humidity_bucket": _hum_bucket(hum_pct),
+        "wind_bucket": _wind_bucket(wind),
         "is_weekend": int(wdn >= 5),
         "is_friday": int(wdn == 4),
         "is_saturday": int(wdn == 5),
@@ -271,6 +315,35 @@ def build_one_feature_row(
     return d
 
 
+def build_ml_feature_dataframe(
+    tr: pd.DataFrame,
+    *,
+    home: str,
+    away: str,
+    stadium: str,
+    game_date,
+    temp_c: float,
+    rain_mm: float,
+    hum_pct: float,
+    cap_map: dict[str, int],
+    wind_mps: float | None = None,
+) -> pd.DataFrame:
+    """단일 경기 ML 입력 (Streamlit·CLI 공용)."""
+    d = build_one_feature_row(
+        tr,
+        home=home,
+        away=away,
+        stadium=stadium,
+        game_date=pd.Timestamp(game_date),
+        temp_c=temp_c,
+        rain_mm=rain_mm,
+        hum_pct=hum_pct,
+        cap_map=cap_map,
+        wind_mps=wind_mps,
+    )
+    return pd.DataFrame([d])[FEATURE_COLUMNS]
+
+
 def build_features_from_schedule(
     schedule: pd.DataFrame,
     train_ready: pd.DataFrame,
@@ -279,6 +352,7 @@ def build_features_from_schedule(
     default_temp: float = 18.0,
     default_rain: float = 0.0,
     default_hum: float = 55.0,
+    default_wind: float = DEFAULT_WIND_MEDIAN_FALLBACK,
 ) -> pd.DataFrame:
     """일정 표 → FEATURE_COLUMNS DataFrame."""
     sched = normalize_schedule_csv(schedule)
@@ -292,6 +366,11 @@ def build_features_from_schedule(
         temp = float(r["기온"]) if "기온" in sched.columns and pd.notna(r.get("기온")) else default_temp
         rain = float(r["강수"]) if "강수" in sched.columns and pd.notna(r.get("강수")) else default_rain
         hum = float(r["습도"]) if "습도" in sched.columns and pd.notna(r.get("습도")) else default_hum
+        wind = (
+            float(r["풍속"])
+            if "풍속" in sched.columns and pd.notna(r.get("풍속"))
+            else default_wind
+        )
         rows.append(
             build_one_feature_row(
                 train_ready,
@@ -303,6 +382,7 @@ def build_features_from_schedule(
                 rain_mm=rain,
                 hum_pct=hum,
                 cap_map=cap_map,
+                wind_mps=wind,
             )
         )
     if bad_dates:

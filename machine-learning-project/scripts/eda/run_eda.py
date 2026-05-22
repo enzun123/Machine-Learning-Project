@@ -10,6 +10,7 @@ feat/eda: `final_dataset.csv` 기준 탐색 전용.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -27,6 +28,23 @@ OUTPUT_DIR = ROOT_DIR / "reports" / "eda"
 FIG_DIR = OUTPUT_DIR / "figures"
 SUMMARY_PATH = OUTPUT_DIR / "eda_summary.md"
 WEEKDAY_ORDER = ["월", "화", "수", "목", "금", "토", "일"]
+
+
+def _setup_matplotlib_korean() -> None:
+    """macOS / Windows / Linux에서 한글 라벨이 깨지지 않도록 폰트 후보를 순서대로 시도."""
+    import matplotlib.font_manager as fm
+
+    candidates: list[str] = []
+    if sys.platform == "darwin":
+        candidates.append("AppleGothic")
+    candidates.extend(["NanumGothic", "Malgun Gothic", "Nanum Gothic", "AppleGothic"])
+    available = {f.name for f in fm.fontManager.ttflist}
+    for name in candidates:
+        if name in available:
+            plt.rcParams["font.family"] = name
+            plt.rcParams["axes.unicode_minus"] = False
+            return
+    plt.rcParams["axes.unicode_minus"] = False
 
 
 def load_data() -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -230,8 +248,7 @@ def main() -> None:
     FIG_DIR.mkdir(parents=True, exist_ok=True)
 
     sns.set_theme(style="whitegrid")
-    plt.rcParams["font.family"] = "AppleGothic"
-    plt.rcParams["axes.unicode_minus"] = False
+    _setup_matplotlib_korean()
 
     df, stadium_df = load_data()
 

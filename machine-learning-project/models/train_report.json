@@ -6,7 +6,7 @@
   "split": "temporal_연도_월_주차_ISO",
   "test_size": 0.2,
   "random_state": 42,
-  "data_path": "/Users/mymac/Machine-Learning-Project/machine-learning-project/data/processed/kbo_train_ready.csv",
+  "data_path": "data/processed/kbo_train_ready.csv",
   "train_time_bounds": {
     "연도_min": 2024,
     "연도_max": 2025,
@@ -38,10 +38,10 @@
     "r2": 0.33268171823705117
   },
   "model": {
-    "mae": 1964.4402285165806,
-    "mse": 7834820.925778836,
-    "rmse": 2799.075012531611,
-    "r2": 0.7380999254895468
+    "mae": 1964.440228516584,
+    "mse": 7834820.925778859,
+    "rmse": 2799.075012531615,
+    "r2": 0.7380999254895461
   },
   "model_type": "RandomForest",
   "log_target_transform": true

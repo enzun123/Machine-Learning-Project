@@ -4,7 +4,6 @@ import hashlib
 import html
 import logging
 import os
-import re
 import sys
 from pathlib import Path
 
@@ -22,23 +21,15 @@ import pandas as pd
 import streamlit as st
 
 from common.congestion_levels import classify_congestion_pct
+from common.kma_vilage_fcst import redact_api_secrets
 from common.logging_config import setup_logging
 
 logger = logging.getLogger(__name__)
 setup_logging()
 
-_RE_KMA_QSECRET = re.compile(r"((?:authKey|serviceKey)=)([^&\s#'\"]+)", re.I)
-
 _NANUM_GOTHIC_URL = (
     "https://github.com/google/fonts/raw/main/ofl/nanumgothic/NanumGothic-Regular.ttf"
 )
-
-
-def _redact_kma_secret_str(text: object) -> str:
-    """HTTP 예외·URL에 붙은 API 인증 쿼리 마스킹 (kv 모듈과 독립)."""
-    if text is None:
-        return ""
-    return _RE_KMA_QSECRET.sub(r"\1***", str(text))
 
 
 def _is_streamlit_cloud() -> bool:
@@ -282,141 +273,6 @@ def _recent_five_kbo(stadium: str, before_iso: str) -> pd.DataFrame:
             exc_info=True,
         )
         return pd.DataFrame()
-
-
-# ----- ML (attendance_rf_pipeline.joblib) -----
-RAIN_LABELS_ML = ["No_Rain", "Rain_0_1mm", "Rain_1_5mm", "Rain_5mm_plus"]
-_SMALL_STADIUM_ML = 15_000
-_DERBY_PAIRS_ML = {
-    frozenset({"LG", "두산"}),
-    frozenset({"롯데", "NC"}),
-    frozenset({"삼성", "KIA"}),
-    frozenset({"KT", "키움"}),
-    frozenset({"SSG", "한화"}),
-}
-
-
-def _scalar_rain_bucket_ml(mm: float) -> str:
-    x = float(mm)
-    if -1.0 <= x <= 0.0:
-        return RAIN_LABELS_ML[0]
-    if 0.0 < x <= 1.0:
-        return RAIN_LABELS_ML[1]
-    if 1.0 < x <= 5.0:
-        return RAIN_LABELS_ML[2]
-    if 5.0 < x:
-        return RAIN_LABELS_ML[3]
-    return RAIN_LABELS_ML[0]
-
-
-def _scalar_temp_bucket_ml(t: float) -> str:
-    s = pd.cut(
-        pd.Series([float(t)]),
-        bins=[-float("inf"), 10, 20, 25, 30, float("inf")],
-        labels=["VeryCold", "Cold", "Mild", "Warm", "Hot"],
-    )
-    v = s.iloc[0]
-    if pd.isna(v):
-        return "Mild"
-    return str(v)
-
-
-def _scalar_hum_bucket_ml(h: float) -> str:
-    s = pd.cut(
-        pd.Series([float(h)]),
-        bins=[0, 40, 60, 80, 100],
-        labels=["Dry", "Normal", "Humid", "VeryHumid"],
-    )
-    v = s.iloc[0]
-    if pd.isna(v):
-        return "Normal"
-    return str(v)
-
-
-def _pick_template_series_ml(tr: pd.DataFrame, home: str, away: str, stadium: str) -> pd.Series:
-    from common.stadium_aliases import STADIUM_ALIAS, stadium_for_model_ohe
-
-    g = tr.copy()
-    g["_g"] = g["구장"].astype(str).replace(STADIUM_ALIAS)
-    st_n = STADIUM_ALIAS.get(str(stadium).strip(), str(stadium).strip())
-    st_ohe = stadium_for_model_ohe(st_n, home)
-    hs, vs = str(home), str(away)
-    masks = [
-        (g["홈팀"].astype(str) == hs) & (g["방문팀"].astype(str) == vs) & (g["_g"] == st_ohe),
-        (g["홈팀"].astype(str) == hs) & (g["_g"] == st_ohe),
-        g["_g"] == st_ohe,
-    ]
-    for m in masks:
-        sub = g.loc[m]
-        if len(sub) >= 1:
-            return sub.sort_values(["연도", "월", "주차_ISO"]).iloc[-1]
-    return g.sort_values(["연도", "월", "주차_ISO"]).iloc[-1]
-
-
-def _build_ml_feature_row(
-    tr: pd.DataFrame,
-    home: str,
-    away: str,
-    stadium: str,
-    game_date,
-    temp_c: float,
-    rain_mm: float,
-    hum_pct: float,
-    cap: int,
-) -> pd.DataFrame:
-    from common.secondary_venue_stats import apply_secondary_priors_to_row
-    from common.stadium_aliases import (
-        STADIUM_ALIAS,
-        is_small_stadium_game,
-        stadium_for_model_ohe,
-    )
-    from common.stadium_capacity import model_feature_capacity
-    from modeling.train_model import FEATURE_COLUMNS
-
-    row = _pick_template_series_ml(tr, home, away, stadium)
-    gdt = pd.Timestamp(game_date)
-    wdn = int(gdt.dayofweek)
-    st_actual = STADIUM_ALIAS.get(str(stadium).strip(), str(stadium).strip())
-    st_key = stadium_for_model_ohe(st_actual, home)
-    cap_map = st.session_state.get("cap_by_stadium") or _load_app_capacity_map()
-    ml_cap = float(model_feature_capacity(stadium, home, cap_map))
-    is_rain_i = int(rain_mm > 0)
-    rain_b = _scalar_rain_bucket_ml(rain_mm)
-    temp_b = _scalar_temp_bucket_ml(temp_c)
-    hum_b = _scalar_hum_bucket_ml(hum_pct)
-    derby = int(frozenset({str(home), str(away)}) in _DERBY_PAIRS_ML)
-
-    d = {c: row.get(c, np.nan) for c in FEATURE_COLUMNS}
-    upd = {
-        "연도": int(gdt.year),
-        "월": int(gdt.month),
-        "주차_ISO": int(gdt.isocalendar().week),
-        "홈팀": str(home),
-        "방문팀": str(away),
-        "구장": st_key,
-        "stadium_capacity": ml_cap,
-        "is_capacity_missing": 0,
-        "is_rain": is_rain_i,
-        "rain_bucket": rain_b,
-        "temp_bucket": temp_b,
-        "is_hot": int(temp_c >= 30),
-        "humidity_bucket": hum_b,
-        "is_weekend": int(wdn >= 5),
-        "is_friday": int(wdn == 4),
-        "is_saturday": int(wdn == 5),
-        "is_sunday": int(wdn == 6),
-        "weekday_sin": float(np.sin(2 * np.pi * wdn / 7)),
-        "weekday_cos": float(np.cos(2 * np.pi * wdn / 7)),
-        "stadium_x_rain": f"{st_key}_{is_rain_i}",
-        "is_small_stadium": int(is_small_stadium_game(st_actual)),
-        "is_derby": derby,
-        "is_childrens_day": int(gdt.month == 5 and gdt.day in (4, 5, 6)),
-    }
-    for k, v in upd.items():
-        if k in d:
-            d[k] = v
-    d = apply_secondary_priors_to_row(d, PROJECT_ROOT, home, away, st_actual, gdt)
-    return pd.DataFrame([d])
 
 
 def _aggregate_rf_importance_from_pipe(pipe) -> pd.Series:
@@ -843,14 +699,6 @@ auto_recent_kbo = st.sidebar.checkbox(
 
 st.sidebar.markdown("---")
 
-_ml_train_path = PROJECT_ROOT / "data" / "processed" / "kbo_train_ready.csv"
-_ml_train_ok = _ml_train_path.exists()
-
-def _ml_model_available(fname: str) -> bool:
-    return (PROJECT_ROOT / "models" / fname).exists() and _ml_train_ok
-
-_rf_model_path = PROJECT_ROOT / "models" / "attendance_rf_pipeline.joblib"
-
 temperature = st.sidebar.slider(
     "예상 기온(℃)",
     -10,
@@ -875,6 +723,15 @@ humidity = st.sidebar.slider(
     0,
     100,
     60
+)
+
+wind_speed = st.sidebar.slider(
+    "예상 풍속(m/s)",
+    0.0,
+    15.0,
+    2.0,
+    0.1,
+    help="ML 모델의 `wind_bucket`에 반영됩니다 (학습·추론 동일 구간).",
 )
 
 st.sidebar.markdown("**ML 알고리즘**")
@@ -1016,20 +873,21 @@ if use_ml_models and _ml_train_ok:
 
         try:
 
-            from modeling.train_model import FEATURE_COLUMNS
+            from modeling.batch_feature_builder import build_ml_feature_dataframe
 
-            X = _build_ml_feature_row(
+            cap_map = st.session_state.get("cap_by_stadium") or _load_app_capacity_map()
+            X = build_ml_feature_dataframe(
                 tr,
-                home_team,
-                away_team,
-                stadium,
-                game_date,
-                float(temperature),
-                float(rainfall_mm),
-                float(humidity),
-                stadium_capacity,
+                home=home_team,
+                away=away_team,
+                stadium=stadium,
+                game_date=game_date,
+                temp_c=float(temperature),
+                rain_mm=float(rainfall_mm),
+                hum_pct=float(humidity),
+                cap_map=cap_map,
+                wind_mps=float(wind_speed),
             )
-            X = X[FEATURE_COLUMNS].copy()
             for col in X.columns:
 
                 if X[col].dtype == object:
@@ -1353,7 +1211,7 @@ if not _ref.get("ok"):
     )
     if _d_s:
         _body += (
-            f'<p class="rain-fcst-warn-tech">({html.escape(_redact_kma_secret_str(_d_s))})</p>'
+            f'<p class="rain-fcst-warn-tech">({html.escape(redact_api_secrets(_d_s))})</p>'
         )
     _body += "</div>"
     st.markdown(_body, unsafe_allow_html=True)
@@ -1385,7 +1243,7 @@ elif _ref.get("mode") == "vilage_pop":
     if _pop_detail:
         st.caption(
             "초단기 RN1은 가져오지 못해 단기 POP만 표시합니다 — "
-            + html.escape(_redact_kma_secret_str(str(_pop_detail).strip()))
+            + html.escape(redact_api_secrets(str(_pop_detail).strip()))
         )
 
 _gout = kv.rainout_cancel_guidance(_ref)
@@ -1403,7 +1261,7 @@ if _src_g:
     )
 for _ln in _gout["lines"]:
     _gparts.append(
-        f'<p style="margin:0 0 8px 0;">{html.escape(_redact_kma_secret_str(str(_ln)))}</p>'
+        f'<p style="margin:0 0 8px 0;">{html.escape(redact_api_secrets(str(_ln)))}</p>'
     )
 _gparts.append("</div>")
 st.markdown(
