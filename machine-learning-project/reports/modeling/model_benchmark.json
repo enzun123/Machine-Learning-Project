@@ -2,6 +2,7 @@
   "n_samples": 1436,
   "n_train": 1149,
   "n_test": 287,
+  "data_path": "data/processed/kbo_train_ready.csv",
   "split": "temporal_연도_월_주차_ISO",
   "baseline_dummy_mean": {
     "mae": 4671.005403880969,
@@ -17,10 +18,10 @@
   },
   "models": {
     "RandomForest": {
-      "mae": 1964.4402285165852,
-      "mse": 7834820.925778859,
-      "rmse": 2799.075012531615,
-      "r2": 0.7380999254895461
+      "mae": 1964.440228516584,
+      "mse": 7834820.925778851,
+      "rmse": 2799.075012531613,
+      "r2": 0.7380999254895464
     },
     "LightGBM": {
       "mae": 1910.6410409263299,
@@ -36,9 +37,9 @@
     }
   },
   "saved_paths": {
-    "RandomForest": "/Users/mymac/Machine-Learning-Project/machine-learning-project/models/attendance_rf_pipeline.joblib",
-    "LightGBM": "/Users/mymac/Machine-Learning-Project/machine-learning-project/models/attendance_lgbm_pipeline.joblib",
-    "XGBoost": "/Users/mymac/Machine-Learning-Project/machine-learning-project/models/attendance_xgb_pipeline.joblib"
+    "RandomForest": "models/attendance_rf_pipeline.joblib",
+    "LightGBM": "models/attendance_lgbm_pipeline.joblib",
+    "XGBoost": "models/attendance_xgb_pipeline.joblib"
   },
   "best_by_mae": "LightGBM",
   "test_time_bounds": {

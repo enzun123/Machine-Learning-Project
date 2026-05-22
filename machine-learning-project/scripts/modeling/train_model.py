@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 
 from common.logging_config import setup_logging
+from common.report_paths import report_relative_path
 
 import joblib
 import numpy as np
@@ -249,7 +250,7 @@ def main() -> None:
         "split": "temporal_연도_월_주차_ISO",
         "test_size": TEST_SIZE,
         "random_state": RANDOM_STATE,
-        "data_path": str(data_path),
+        "data_path": report_relative_path(root, data_path),
         "train_time_bounds": _split_time_bounds(df, idx_train),
         "test_time_bounds": _split_time_bounds(df, idx_test),
         "baseline_dummy_mean": _metrics(y_test, y_dummy),

@@ -13,6 +13,7 @@
 - [Windows 실행 가이드](#windows-실행-가이드)
 - [3개 모델 (RF · LGBM · XGB)](#3개-모델-rf--lgbm--xgb)
 - [Streamlit Cloud](#streamlit-cloud)
+- [자동 테스트 (CI)](#자동-테스트-ci)
 - [모델 성능 · 스크립트 · 팀](#모델-성능--스크립트--팀)
 
 ---
@@ -24,14 +25,16 @@
 경기 일정·구장·기상·순위로 **관중 수**를 예측합니다. Streamlit에서 예측·혼잡도·동네예보(우천 참고)를 볼 수 있습니다.
 
 - **모델:** RandomForest(기본) · LightGBM · XGBoost (UI에서 선택, 다중 선택 시 **평균**)
+- **ML 입력:** 기온·강수·습도·**풍속(m/s)** → 학습과 동일한 `wind_bucket` · **경기 날짜 이전** 데이터만으로 폼 피처 구성
 - **repo에 데이터·joblib가 있으면** 크롤링·학습 없이 **웹앱만** 실행 가능
 
 ### 폴더 구조
 
 ```
 Machine-Learning-Project/          ← git clone 루트
-├── requirements.txt               ← Streamlit Cloud
+├── requirements.txt               ← Streamlit Cloud (xgboost 포함)
 ├── packages.txt
+├── .github/workflows/pytest.yml   ← push/PR 시 자동 pytest
 └── machine-learning-project/      ← ★ 모든 명령은 여기서 실행
     ├── pyproject.toml             ← pip install -e .
     ├── data/
@@ -64,12 +67,15 @@ kbo_scraping / kbo_standings_scrape → raw, standings
 kbo_size → kbo_stadium_info.csv
 weather_api → interim (*_weather.csv)
 preprocess_attendance_weather → final_dataset.csv
-build_features → kbo_train_ready.csv
+build_features → kbo_train_ready.csv   (KIA 홈 광주 관중 상한 20,500 반영)
 train_model.py          → RF .joblib 만
 benchmark_models.py     → RF + LGBM + XGB .joblib (3개 한 번에)
 evaluate_model.py       → eval_report.json (RF)
+batch_feature_builder.py → 단일·CSV 추론 피처 (Streamlit과 동일 로직)
 streamlit_app.py        → 웹 UI
 ```
+
+> **피처 CSV를 다시 만들 때:** `build_features.py` 실행 후 필요하면 `benchmark_models.py`로 joblib 재학습.
 
 ### 공통 요구사항
 
@@ -140,13 +146,18 @@ pip3 install -e ".[dev]"
 pytest
 ```
 
+- 스모크(경로·CSV·joblib) + 추론 피처(날짜 필터·`wind_bucket`) 등 **19개** 테스트
+- GitHub Actions: `main` / `develop` push·PR 시 Ubuntu에서 Python 3.11·3.12로 동일 실행
+
 ### 4. 3개 모델 학습 (macOS)
 
 ```bash
 cd machine-learning-project
-pip3 install -e ".[benchmark]"
+pip3 install -e .
 python3 scripts/modeling/benchmark_models.py
 ```
+
+(`pip install -e .`에 **xgboost** 포함. Optuna 튜닝만 `pip install -e ".[benchmark]"`와 동일.)
 
 Streamlit → 사이드바 **ML 알고리즘** → RF · LGBM · XGB **전부 체크**.
 
@@ -268,7 +279,7 @@ pip install -e ".[dev]"
 pytest
 ```
 
-또는 `python -m pytest`
+또는 `python -m pytest` — macOS와 동일하게 **19개** 테스트, CI는 GitHub Actions 참고.
 
 ### 4. 3개 모델 학습 (Windows)
 
@@ -276,7 +287,7 @@ pytest
 
 ```powershell
 cd machine-learning-project
-pip install -e ".[benchmark]"
+pip install -e .
 python scripts\modeling\benchmark_models.py
 ```
 
@@ -341,7 +352,7 @@ streamlit run scripts\app\streamlit_app.py
 | `python` 인식 안 됨 | 설치 시 **Add to PATH** 또는 `py -3.12` |
 | `Activate.ps1` 거부 | `Set-ExecutionPolicy RemoteSigned -Scope CurrentUser` |
 | `streamlit` 없음 | `python -m streamlit run scripts\app\streamlit_app.py` |
-| EDA 차트 한글 □□□ | `run_eda.py`가 mac용 `AppleGothic` 사용 — `eda_summary.md` 텍스트는 정상 |
+| EDA 차트 한글 □□□ | `NanumGothic` / `Malgun Gothic` 등 설치·자동 선택 (`run_eda.py`) |
 | Selenium 실패 | Chrome 설치, 백신이 chromedriver 차단 여부 확인 |
 
 **루트에서 Cloud와 동일 설치 (선택)**
@@ -362,7 +373,7 @@ pip install -r requirements.txt
 
 - **3번 따로 실행할 필요 없음** — `benchmark_models.py` 한 번이면 RF → LGBM → XGB 순서로 저장.
 - **사전 조건:** `data/processed/kbo_train_ready.csv` (없으면 `build_features.py` 또는 repo 포함 데이터).
-- **XGB:** `pip install -e ".[benchmark]"` (xgboost 포함).
+- **XGB:** `pip install -e .` (xgboost 기본 포함). Cloud도 루트 `requirements.txt`에 xgboost 있음.
 
 **Streamlit:** ML 알고리즘에서 여러 모델 체크 → 예측 **평균**. repo에 3개 joblib 있으면 학습 생략 가능.
 
@@ -389,9 +400,28 @@ pip install -r requirements.txt
 
 | 기능 | 로컬 (Mac/Win) | Cloud |
 |------|----------------|-------|
-| RF/LGBM/XGB 예측 | ✅ | ✅ |
+| RF/LGBM/XGB 예측 | ✅ (xgboost 포함 설치) | ✅ |
 | 동네예보 | API 키 / secrets.toml | Secrets |
 | 최근 5경기 크롤 | Chrome (기본 ON) | 불안정 (OFF 권장) |
+
+---
+
+## 자동 테스트 (CI)
+
+| 항목 | 내용 |
+|------|------|
+| 워크플로 | `.github/workflows/pytest.yml` |
+| 트리거 | `main`, `develop` 브랜치 push · pull request |
+| 환경 | Ubuntu, Python **3.11** · **3.12** |
+| 명령 | `pip install -e "./machine-learning-project[dev]"` → `pytest -q` |
+
+로컬에서 CI와 동일하게 확인:
+
+```bash
+cd machine-learning-project
+pip install -e ".[dev]"
+pytest -q
+```
 
 ---
 
@@ -401,10 +431,13 @@ pip install -r requirements.txt
 
 | 기능 | 설명 |
 |------|------|
-| 단일 경기 예측 | 날짜·구장·팀·기상 → 관중·혼잡도 |
-| CSV 일괄 | `경기날짜, 홈팀, 방문팀, 구장` 업로드 |
+| 단일 경기 예측 | 날짜·구장·팀·**기온·강수·습도·풍속** → ML·혼잡도 |
+| ML 피처 시점 | 선택한 **경기 날짜 이전** `kbo_train_ready`만 사용 (폼·prior 누수 방지) |
+| CSV 일괄 | `경기날짜, 홈팀, 방문팀, 구장` (+ 선택: 기온·강수·습도·**풍속**) |
 | 대체 구장 | 포항·울산·청주 prior |
 | 한계 | 2024–25 학습 — 2026·미래 일정 오차 가능 |
+
+**KIA 홈 광주:** 건축 정원 22,000 · 실제 판매·크롤 상한 **20,500** — `build_features.py`에서 관중 클립. MAE가 크게 나오는 구장은 데이터·시즌 하락 영향이 큼.
 
 ### 주요 스크립트
 
@@ -412,10 +445,11 @@ pip install -r requirements.txt
 |------|------|
 | `app/streamlit_app.py` | 메인 웹앱 |
 | `app/csv_batch_predict_ui.py` | CSV 일괄 UI |
+| `modeling/batch_feature_builder.py` | 추론 피처 (단일·CSV, Streamlit 공용) |
 | `modeling/benchmark_models.py` | 3모델 |
 | `modeling/train_model.py` | RF만 |
 | `features/build_features.py` | 피처 |
-| `eda/run_eda.py` | EDA |
+| `eda/run_eda.py` | EDA (macOS·Windows 한글 폰트 자동) |
 | `data_collection/kbo_scraping.py` | 관중 크롤링 |
 | `common/kma_vilage_fcst.py` | 동네예보 API |
 

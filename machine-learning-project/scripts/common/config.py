@@ -12,6 +12,11 @@ SMALL_STADIUM_CAPACITY: float = 15_000.0
 # 학습·예측 관중 상한: 구장 정원 초과 불가 (정원 × 이 배수, 1.0 = 정원 그대로)
 ATTENDANCE_CAP_CLIP_MULTIPLIER: float = 1.0
 
+# KIA 홈 광주: 건축·마스터 정원 22,000 vs GraphDaily·좌석 판매 상한 20,500
+KIA_HOME_TEAM: str = "KIA"
+GWANGJU_STADIUM: str = "광주"
+KIA_GWANGJU_EFFECTIVE_SEAT_CAP: int = 20_500
+
 # --- 강수 버킷 (일합계강수량 mm) ---
 RAIN_BINS: tuple[float, ...] = (-1.0, 0.0, 1.0, 5.0, float("inf"))
 RAIN_LABELS: tuple[str, ...] = ("No_Rain", "Rain_0_1mm", "Rain_1_5mm", "Rain_5mm_plus")

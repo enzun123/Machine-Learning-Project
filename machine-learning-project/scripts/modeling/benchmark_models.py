@@ -24,6 +24,7 @@ import numpy as np
 from sklearn.dummy import DummyRegressor
 
 from common.logging_config import setup_logging
+from common.report_paths import report_relative_path
 from modeling.train_model import (
     FEATURE_COLUMNS,
     TARGET,
@@ -141,6 +142,7 @@ def main() -> None:
         "n_samples": int(len(df)),
         "n_train": int(len(X_train)),
         "n_test": int(len(X_test)),
+        "data_path": report_relative_path(root, data_path),
         "split": "temporal_연도_월_주차_ISO",
         "baseline_dummy_mean": _metrics(y_test, dummy.predict(X_test)),
         "baseline_stadium_mean": _metrics(y_test, y_stadium),
@@ -162,7 +164,7 @@ def main() -> None:
         if out_name:
             out_path = models_dir / out_name
             joblib.dump(pipe, out_path)
-            results["saved_paths"][name] = str(out_path)
+            results["saved_paths"][name] = report_relative_path(root, out_path)
             print(f"  → {out_path}")
 
         if m["mae"] < best_mae:
