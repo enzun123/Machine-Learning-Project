@@ -373,19 +373,35 @@ def _predict_ml_attendance_for_row(
     return int(round(float(np.mean(preds))))
 
 
+def _selected_match_chart_label(
+    game_date: object,
+    home_team: str,
+    away_team: str,
+) -> str:
+    d = pd.Timestamp(game_date).strftime("%m/%d")
+    return f"{d}\n{home_team} vs {away_team}\n(예측)"
+
+
 def _plot_recent_actual_vs_predicted(
     compare: pd.DataFrame,
     *,
     future_pred: int,
     stadium_name: str,
+    game_date: object | None = None,
+    home_team: str | None = None,
+    away_team: str | None = None,
 ) -> None:
     """최근 N경기 실제·예측 막대 비교 + 이번 경기 예측 1막대."""
     n = len(compare)
-    fig, ax = plt.subplots(figsize=(max(9, n * 1.6 + 2), 4.2))
+    fig, ax = plt.subplots(figsize=(max(9, n * 1.6 + 2.5), 4.4))
     fig.patch.set_facecolor("#07111f")
     ax.set_facecolor("#07111f")
 
-    labels = compare["경기"].tolist() + ["이번 경기\n(예측)"]
+    if game_date is not None and home_team and away_team:
+        future_lbl = _selected_match_chart_label(game_date, home_team, away_team)
+    else:
+        future_lbl = "이번 경기\n(예측)"
+    labels = compare["경기"].tolist() + [future_lbl]
     x = np.arange(len(labels))
     bar_w = 0.36
 
@@ -428,9 +444,15 @@ def _plot_recent_actual_vs_predicted(
     ax.text(x[n], future_pred + dy, f"{int(future_pred):,}", ha="center", color="white", fontsize=9)
 
     ax.set_xticks(x)
-    ax.set_xticklabels(labels, color="white")
+    ax.set_xticklabels(labels, color="white", fontsize=8)
     ax.set_ylabel("관중 수")
-    ax.set_title(f"{stadium_name} 최근 {n}경기 실제 vs 예측 + 이번 경기")
+    if game_date is not None and home_team and away_team:
+        ax.set_title(
+            f"{stadium_name} 최근 {n}경기 실제 vs 예측 + "
+            f"{pd.Timestamp(game_date).strftime('%Y-%m-%d')} {home_team} vs {away_team}"
+        )
+    else:
+        ax.set_title(f"{stadium_name} 최근 {n}경기 실제 vs 예측 + 이번 경기")
     ax.tick_params(colors="white")
     ax.yaxis.label.set_color("white")
     ax.title.set_color("white")
@@ -726,6 +748,70 @@ ML_MODEL_REGISTRY: list[tuple[str, str, str]] = [
 ]
 
 
+def render_ml_feature_importance_ui(
+    model_labels: list[str],
+    *,
+    context_note: str,
+    selectbox_key: str = "ml_feat_imp_model",
+) -> None:
+    """선택한 ML 모델의 피처 중요도 막대·표 (한 경기·CSV 일괄 공통)."""
+    if not model_labels:
+        return
+
+    with st.expander("피처 중요도", expanded=False):
+        if len(model_labels) > 1:
+            imp_model_label = st.selectbox(
+                "중요도를 볼 알고리즘",
+                options=model_labels,
+                key=selectbox_key,
+            )
+        else:
+            imp_model_label = model_labels[0]
+
+        st.markdown(
+            f"아래 **막대 그래프**는 **{imp_model_label}** 학습 결과에서 "
+            "전체적으로 분할·분기에 자주 쓰인 변수입니다. "
+            "강수·기온·습도·풍 세부 피처는 중요도 표에서 **두 줄(날씨 그룹)** 로 합산했습니다. "
+            f"{context_note} "
+            "**한 건·한 경기를 인과적으로 쪼개는 값(SHAP 등)은 아니며**, "
+            "모델이 전반적으로 어떤 정보에 무게를 두었는지 참고용입니다."
+        )
+        imp_fname = next(
+            (fname for _k, label, fname in ML_MODEL_REGISTRY if label == imp_model_label),
+            None,
+        )
+        imp = pd.Series(dtype=float)
+        if imp_fname is not None:
+            imp_path = PROJECT_ROOT / "models" / imp_fname
+            try:
+                mt = int(os.path.getmtime(imp_path))
+            except OSError:
+                mt = 0
+            imp = _cached_rf_feature_importance_series(str(imp_path), mt)
+
+        if len(imp) > 0:
+            imp_disp = _group_rf_importance_for_display(imp)
+            fig_imp = _plot_rf_importance_barh(
+                imp_disp, top_n=15, model_label=imp_model_label
+            )
+            st.pyplot(fig_imp)
+            plt.close(fig_imp)
+            p_all = (imp_disp / imp_disp.sum() * 100.0).round(2)
+            w_fix = p_all.reindex(list(_ML_IMP_WEATHER_DISPLAY_KEYS)).fillna(0.0)
+            rest_tbl = (
+                p_all.drop(labels=list(_ML_IMP_WEATHER_DISPLAY_KEYS), errors="ignore")
+                .sort_values(ascending=False)
+                .head(20)
+            )
+            pct = pd.concat([w_fix, rest_tbl])
+            tbl = pct.reset_index()
+            tbl.columns = ["피처", "기여(%)"]
+            tbl["피처"] = tbl["피처"].map(lambda x: _ko_ml_feature_label(str(x)))
+            st.dataframe(tbl, width="stretch", hide_index=True)
+        else:
+            st.info("피처 중요도를 불러오지 못했습니다.")
+
+
 @st.cache_resource
 def _load_ml_pipeline(model_filename: str):
     p = PROJECT_ROOT / "models" / model_filename
@@ -797,74 +883,115 @@ def _ml_model_available(fname: str) -> bool:
     return (PROJECT_ROOT / "models" / fname).is_file() and _ml_train_ok
 
 
-_app_mode = st.sidebar.radio(
-    "작업 모드",
-    ["단일 경기 예측", "미래 경기 관중수 (CSV)"],
-    help="CSV 모드: 예정·미래 경기 일정 CSV → 경기별 예상 관중수를 한 번에 계산합니다.",
+st.sidebar.markdown("**ML 알고리즘**")
+_ml_help = (
+    "켜면 한 경기·CSV 일정 모두에 학습된 파이프라인을 적용합니다. "
+    "여러 개를 켜면 **예측값은 평균**입니다. "
+    "모델 파일은 `scripts/modeling/benchmark_models.py` 로 생성합니다."
+)
+use_ml_rf = st.sidebar.checkbox(
+    "RandomForest",
+    value=_ml_model_available("attendance_rf_pipeline.joblib"),
+    disabled=not _ml_model_available("attendance_rf_pipeline.joblib"),
+    help=_ml_help,
+)
+use_ml_lgbm = st.sidebar.checkbox(
+    "LightGBM",
+    value=False,
+    disabled=not _ml_model_available("attendance_lgbm_pipeline.joblib"),
+    help=_ml_help,
+)
+use_ml_xgb = st.sidebar.checkbox(
+    "XGBoost",
+    value=False,
+    disabled=not _ml_model_available("attendance_xgb_pipeline.joblib"),
+    help=_ml_help,
+)
+use_ml_models = use_ml_rf or use_ml_lgbm or use_ml_xgb
+_ml_choice_map = {
+    "rf": use_ml_rf,
+    "lgbm": use_ml_lgbm,
+    "xgb": use_ml_xgb,
+}
+if use_ml_models and not _ml_train_ok:
+    st.sidebar.caption("ML: `kbo_train_ready.csv` 없음 → 휴리스틱만 사용됩니다.")
+_missing = [
+    label
+    for key, label, fname in ML_MODEL_REGISTRY
+    if _ml_choice_map.get(key) and not _ml_model_available(fname)
+]
+if _missing:
+    st.sidebar.caption(f"파일 없음(학습 필요): {', '.join(_missing)}")
+
+_ml_chosen_labels: list[str] = []
+if use_ml_rf:
+    _ml_chosen_labels.append("RandomForest")
+if use_ml_lgbm:
+    _ml_chosen_labels.append("LightGBM")
+if use_ml_xgb:
+    _ml_chosen_labels.append("XGBoost")
+
+temperature = st.sidebar.slider("예상 기온(℃)", -10, 40, 23)
+rainfall_mm = st.sidebar.slider(
+    "일 합계 강수(mm)",
+    0.0,
+    120.0,
+    0.0,
+    0.5,
+    help=(
+        "**RandomForest** 입력의 `rain_bucket`·`is_rain` 등에 반영됩니다. "
+        "CSV에 강수 열이 없으면 이 값을 모든 경기에 적용합니다."
+    ),
+)
+humidity = st.sidebar.slider("예상 습도(%)", 0, 100, 60)
+wind_speed = st.sidebar.slider(
+    "예상 풍속(m/s)",
+    0.0,
+    15.0,
+    2.0,
+    0.1,
+    help="ML 모델의 `wind_bucket`에 반영됩니다 (학습·추론 동일 구간).",
 )
 
-if _app_mode == "미래 경기 관중수 (CSV)":
-    st.sidebar.markdown("---")
-    st.sidebar.caption(
-        "일정 CSV에 **기온·강수·습도** 열이 없으면 아래 값을 모든 경기에 적용합니다."
-    )
-    _batch_temp = st.sidebar.slider("예상 기온(℃)", -10, 40, 18)
-    _batch_rain = st.sidebar.slider(
-        "일 합계 강수(mm)",
-        0.0,
-        120.0,
-        0.0,
-        0.5,
-    )
-    _batch_hum = st.sidebar.slider("예상 습도(%)", 0, 100, 55)
+st.sidebar.markdown("---")
+st.sidebar.markdown("**일정 CSV**")
+st.sidebar.caption("샘플 형식 확인 후 CSV를 올리면 **자동으로 예측 결과** 화면으로 이동합니다.")
 
-    st.sidebar.markdown("**ML 알고리즘**")
-    _batch_ml_help = (
-        "켜면 업로드한 일정 각 경기에 학습된 파이프라인으로 관중을 추정합니다. "
-        "여러 개를 켜면 **경기별 예측은 평균**으로 표시합니다."
-    )
-    _batch_use_rf = st.sidebar.checkbox(
-        "RandomForest",
-        value=_ml_model_available("attendance_rf_pipeline.joblib"),
-        disabled=not _ml_model_available("attendance_rf_pipeline.joblib"),
-        help=_batch_ml_help,
-    )
-    _batch_use_lgbm = st.sidebar.checkbox(
-        "LightGBM",
-        value=False,
-        disabled=not _ml_model_available("attendance_lgbm_pipeline.joblib"),
-        help=_batch_ml_help,
-    )
-    _batch_use_xgb = st.sidebar.checkbox(
-        "XGBoost",
-        value=False,
-        disabled=not _ml_model_available("attendance_xgb_pipeline.joblib"),
-        help=_batch_ml_help,
-    )
-    _batch_chosen: list[str] = []
-    if _batch_use_rf:
-        _batch_chosen.append("RandomForest")
-    if _batch_use_lgbm:
-        _batch_chosen.append("LightGBM")
-    if _batch_use_xgb:
-        _batch_chosen.append("XGBoost")
-    if not _batch_chosen and _ml_train_ok:
-        st.sidebar.warning("예측 모델을 하나 이상 선택하세요.")
-    if not _ml_train_ok:
-        st.sidebar.caption("ML: `kbo_train_ready.csv` 없음 — `build_features.py` 실행 필요.")
+from modeling.batch_feature_builder import schedule_template_path
+from app.csv_batch_predict_ui import (
+    process_sidebar_schedule_csv,
+    render_csv_batch_results_main,
+)
 
-    from app.csv_batch_predict_ui import render_csv_batch_predict_ui
-
-    render_csv_batch_predict_ui(
-        chosen=_batch_chosen,
-        default_temp=float(_batch_temp),
-        default_rain=float(_batch_rain),
-        default_hum=float(_batch_hum),
-        cap_by_stadium=st.session_state.cap_by_stadium,
-        ml_train_ok=_ml_train_ok,
+_sched_tpl_path = schedule_template_path(PROJECT_ROOT)
+if _sched_tpl_path.is_file():
+    st.sidebar.download_button(
+        "샘플 CSV",
+        data=_sched_tpl_path.read_bytes(),
+        file_name=_sched_tpl_path.name,
+        mime="text/csv",
+        use_container_width=True,
     )
-    st.stop()
 
+_schedule_csv_upload = st.sidebar.file_uploader(
+    "경기 일정 CSV",
+    type=["csv"],
+    key="sidebar_schedule_csv",
+    help="필수: 경기날짜, 홈팀, 방문팀, 구장",
+)
+
+_batch_show_main = process_sidebar_schedule_csv(
+    _schedule_csv_upload,
+    _ml_chosen_labels,
+    default_temp=float(temperature),
+    default_rain=float(rainfall_mm),
+    default_hum=float(humidity),
+    cap_by_stadium=st.session_state.cap_by_stadium,
+    ml_train_ok=_ml_train_ok,
+)
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("**한 경기 입력**")
 game_date = st.sidebar.date_input("경기 날짜")
 st.sidebar.caption(
     "차트·최근 경기 자동 반영·예측 입력의 **기준일**입니다. 당일 0시 **이전** 경기만 포함합니다."
@@ -917,82 +1044,14 @@ auto_recent_kbo = st.sidebar.checkbox(
     ),
 )
 
-st.sidebar.markdown("---")
-
-temperature = st.sidebar.slider(
-    "예상 기온(℃)",
-    -10,
-    40,
-    23
-)
-
-rainfall_mm = st.sidebar.slider(
-    "일 합계 강수(mm)",
-    0.0,
-    120.0,
-    0.0,
-    0.5,
-    help=(
-        "**RandomForest** 입력의 `rain_bucket`·`is_rain`·`stadium_x_rain` 등에 반영됩니다. "
-        "휴리스틱만 사용할 때는 이 슬라이더가 관중 추정에 직접 쓰이지 않을 수 있습니다."
-    ),
-)
-
-humidity = st.sidebar.slider(
-    "예상 습도(%)",
-    0,
-    100,
-    60
-)
-
-wind_speed = st.sidebar.slider(
-    "예상 풍속(m/s)",
-    0.0,
-    15.0,
-    2.0,
-    0.1,
-    help="ML 모델의 `wind_bucket`에 반영됩니다 (학습·추론 동일 구간).",
-)
-
-st.sidebar.markdown("**ML 알고리즘**")
-_ml_help = (
-    "켜면 사이드바 입력(날짜·기온·습도·강수·정원 등)으로 해당 모델이 관중을 추정합니다. "
-    "여러 개를 켜면 **예측값은 평균**으로 표시하고, 아래에서 알고리즘별 수치를 비교할 수 있습니다. "
-    "모델 파일은 `scripts/modeling/benchmark_models.py` 로 생성합니다."
-)
-use_ml_rf = st.sidebar.checkbox(
-    "RandomForest",
-    value=_ml_model_available("attendance_rf_pipeline.joblib"),
-    disabled=not _ml_model_available("attendance_rf_pipeline.joblib"),
-    help=_ml_help,
-)
-use_ml_lgbm = st.sidebar.checkbox(
-    "LightGBM",
-    value=False,
-    disabled=not _ml_model_available("attendance_lgbm_pipeline.joblib"),
-    help=_ml_help,
-)
-use_ml_xgb = st.sidebar.checkbox(
-    "XGBoost",
-    value=False,
-    disabled=not _ml_model_available("attendance_xgb_pipeline.joblib"),
-    help=_ml_help,
-)
-use_ml_models = use_ml_rf or use_ml_lgbm or use_ml_xgb
-_ml_choice_map = {
-    "rf": use_ml_rf,
-    "lgbm": use_ml_lgbm,
-    "xgb": use_ml_xgb,
-}
-if use_ml_models and not _ml_train_ok:
-    st.sidebar.caption("ML: `kbo_train_ready.csv` 없음 → 휴리스틱만 사용됩니다.")
-_missing = [
-    label
-    for key, label, fname in ML_MODEL_REGISTRY
-    if _ml_choice_map.get(key) and not _ml_model_available(fname)
-]
-if _missing:
-    st.sidebar.caption(f"파일 없음(학습 필요): {', '.join(_missing)}")
+if _batch_show_main:
+    st.session_state["batch_feat_imp_renderer"] = render_ml_feature_importance_ui
+    render_csv_batch_results_main(
+        chosen=_ml_chosen_labels,
+        cap_by_stadium=st.session_state.cap_by_stadium,
+        ml_train_ok=_ml_train_ok,
+    )
+    st.stop()
 
 # =========================
 # 예측: 휴리스틱 + (옵션) RF 파이프라인
@@ -1152,62 +1211,14 @@ if ml_used:
         with st.expander("알고리즘별 예측 비교", expanded=True):
             _plot_ml_predictions_bar(ml_predictions)
 
-    _imp_options = list(ml_predictions.keys())
+    render_ml_feature_importance_ui(
+        list(ml_predictions.keys()),
+        context_note=f"지금 화면의 **{predicted_attendance:,}명** 예측은",
+        selectbox_key="ml_feat_imp_model",
+    )
 
-    with st.expander("피처 중요도 · 이번 입력 요약", expanded=False):
-        if len(_imp_options) > 1:
-            _imp_model_label = st.selectbox(
-                "중요도를 볼 알고리즘",
-                options=_imp_options,
-                key="ml_feat_imp_model",
-            )
-        else:
-            _imp_model_label = _imp_options[0]
-
-        st.markdown(
-            f"아래 **막대 그래프**는 **{_imp_model_label}** 학습 결과에서 "
-            "전체적으로 분할·분기에 자주 쓰인 변수입니다. "
-            "강수·기온·습도·풍 세부 피처는 중요도 표에서 **두 줄(날씨 그룹)** 로 합산했습니다. "
-            f"지금 화면의 **{predicted_attendance:,}명** 같은 **한 건의 예측**을 인과적으로 쪼개는 값(SHAP 등)은 아니며, "
-            "모델이 전반적으로 어떤 정보에 무게를 두었는지 참고용입니다."
-        )
-        _imp_fname = next(
-            (fname for _k, label, fname in ML_MODEL_REGISTRY if label == _imp_model_label),
-            None,
-        )
-        _imp = pd.Series(dtype=float)
-        if _imp_fname is not None:
-            _imp_path = PROJECT_ROOT / "models" / _imp_fname
-            try:
-                _mt = int(os.path.getmtime(_imp_path))
-            except OSError:
-                _mt = 0
-            _imp = _cached_rf_feature_importance_series(str(_imp_path), _mt)
-
-        if len(_imp) > 0:
-            _imp_disp = _group_rf_importance_for_display(_imp)
-            _fig_imp = _plot_rf_importance_barh(
-                _imp_disp, top_n=15, model_label=_imp_model_label
-            )
-            st.pyplot(_fig_imp)
-            plt.close(_fig_imp)
-            _p_all = (_imp_disp / _imp_disp.sum() * 100.0).round(2)
-            _w_fix = _p_all.reindex(list(_ML_IMP_WEATHER_DISPLAY_KEYS)).fillna(0.0)
-            _rest_tbl = (
-                _p_all.drop(labels=list(_ML_IMP_WEATHER_DISPLAY_KEYS), errors="ignore")
-                .sort_values(ascending=False)
-                .head(20)
-            )
-            _pct = pd.concat([_w_fix, _rest_tbl])
-            _tbl = _pct.reset_index()
-            _tbl.columns = ["피처", "기여(%)"]
-            _tbl["피처"] = _tbl["피처"].map(lambda x: _ko_ml_feature_label(str(x)))
-            st.dataframe(_tbl, width="stretch", hide_index=True)
-        else:
-            st.info("피처 중요도를 불러오지 못했습니다.")
-
-        if ml_row_snapshot:
-            st.markdown("**이번 예측에 넣은 주요 값** (유사 과거 행 + 사이드바 일부 덮어쓴 뒤)")
+    if ml_used and ml_row_snapshot:
+        with st.expander("이번 입력 요약", expanded=False):
             _snap_rows = []
             for k, v in ml_row_snapshot.items():
                 if isinstance(v, bool):
@@ -1595,6 +1606,9 @@ else:
             compare_df,
             future_pred=predicted_attendance,
             stadium_name=stadium,
+            game_date=game_date,
+            home_team=home_team,
+            away_team=away_team,
         )
     else:
         st.warning(
@@ -1614,7 +1628,7 @@ else:
             home_team,
             away_team,
             predicted_attendance,
-            "이번 경기 예측",
+            _selected_match_chart_label(game_date, home_team, away_team),
         ]
         fig, ax = plt.subplots(figsize=(11, 4))
         fig.patch.set_facecolor("#07111f")
