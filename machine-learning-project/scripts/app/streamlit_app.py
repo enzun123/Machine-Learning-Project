@@ -275,6 +275,224 @@ def _recent_five_kbo(stadium: str, before_iso: str) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+def _weather_for_historical_row(attendance_df: pd.DataFrame, row: pd.Series) -> tuple[float, float, float, float]:
+    """과거 경기 행에 맞는 기상(로컬 CSV 병합, 없으면 기본값)."""
+    from common.config import (
+        DEFAULT_RH_MEDIAN_FALLBACK,
+        DEFAULT_TEMP_MEDIAN_FALLBACK,
+        DEFAULT_WIND_MEDIAN_FALLBACK,
+    )
+
+    temp = DEFAULT_TEMP_MEDIAN_FALLBACK
+    rain = 0.0
+    hum = DEFAULT_RH_MEDIAN_FALLBACK
+    wind = DEFAULT_WIND_MEDIAN_FALLBACK
+    if attendance_df is None or attendance_df.empty:
+        return temp, rain, hum, wind
+
+    gdt = pd.Timestamp(row["경기날짜"]).normalize()
+    home = str(row["홈팀"]).strip()
+    away = str(row["방문팀"]).strip()
+    st_col = str(row.get("구장", "")).strip()
+    sub = attendance_df.copy()
+    sub["_gd"] = pd.to_datetime(sub["경기날짜"], errors="coerce").dt.normalize()
+    mask = (
+        (sub["_gd"] == gdt)
+        & (sub["홈팀"].astype(str).str.strip() == home)
+        & (sub["방문팀"].astype(str).str.strip() == away)
+    )
+    if st_col:
+        mask &= sub["구장"].astype(str).str.strip() == st_col
+    hit = sub.loc[mask]
+    if hit.empty:
+        return temp, rain, hum, wind
+    r = hit.iloc[-1]
+
+    def _f(col: str, default: float) -> float:
+        if col in r.index and pd.notna(r[col]):
+            return float(r[col])
+        return default
+
+    return (
+        _f("일평균기온(°C)", temp),
+        _f("일합계강수량(mm)", rain),
+        _f("일평균상대습도(%)", hum),
+        _f("일평균풍속(m/s)", wind),
+    )
+
+
+def _predict_ml_attendance_for_row(
+    tr: pd.DataFrame,
+    *,
+    home: str,
+    away: str,
+    stadium_name: str,
+    game_date,
+    temp_c: float,
+    rain_mm: float,
+    hum_pct: float,
+    wind_mps: float,
+    cap_map: dict[str, int],
+    ml_choice_map: dict[str, bool],
+) -> int | None:
+    """단일 과거 경기 ML 예측(선택 모델 평균)."""
+    from common.stadium_capacity import venue_clip_capacity
+    from modeling.batch_feature_builder import build_ml_feature_dataframe
+
+    cap_hi = max(1, venue_clip_capacity(stadium_name, home, cap_map))
+    preds: list[int] = []
+    try:
+        X = build_ml_feature_dataframe(
+            tr,
+            home=home,
+            away=away,
+            stadium=stadium_name,
+            game_date=game_date,
+            temp_c=temp_c,
+            rain_mm=rain_mm,
+            hum_pct=hum_pct,
+            cap_map=cap_map,
+            wind_mps=wind_mps,
+        )
+        for col in X.columns:
+            if X[col].dtype == object:
+                X[col] = X[col].astype(str).fillna("missing")
+        for key, _label, fname in ML_MODEL_REGISTRY:
+            if not ml_choice_map.get(key):
+                continue
+            pipe = _load_ml_pipeline(fname)
+            if pipe is None:
+                continue
+            raw = float(np.asarray(pipe.predict(X))[0])
+            preds.append(min(int(round(max(0.0, raw))), cap_hi))
+    except Exception as e:
+        logger.warning("과거 경기 ML 예측 실패 (%s vs %s): %s", home, away, e)
+        return None
+    if not preds:
+        return None
+    return int(round(float(np.mean(preds))))
+
+
+def _plot_recent_actual_vs_predicted(
+    compare: pd.DataFrame,
+    *,
+    future_pred: int,
+    stadium_name: str,
+) -> None:
+    """최근 N경기 실제·예측 막대 비교 + 이번 경기 예측 1막대."""
+    n = len(compare)
+    fig, ax = plt.subplots(figsize=(max(9, n * 1.6 + 2), 4.2))
+    fig.patch.set_facecolor("#07111f")
+    ax.set_facecolor("#07111f")
+
+    labels = compare["경기"].tolist() + ["이번 경기\n(예측)"]
+    x = np.arange(len(labels))
+    bar_w = 0.36
+
+    actuals = compare["실제"].to_numpy(dtype=float)
+    preds = compare["예측"].to_numpy(dtype=float)
+
+    ax.bar(
+        x[:n] - bar_w / 2,
+        actuals,
+        bar_w,
+        label="실제(기록실)",
+        color="#4f8cff",
+    )
+    ax.bar(
+        x[:n] + bar_w / 2,
+        preds,
+        bar_w,
+        label="예측(ML)",
+        color="#f59e0b",
+    )
+    ax.bar(
+        x[n],
+        future_pred,
+        bar_w * 1.6,
+        label="이번 경기 예측",
+        color="#18e6ff",
+    )
+
+    ymax = max(
+        float(np.nanmax(actuals)) if len(actuals) else 0.0,
+        float(np.nanmax(preds)) if len(preds) else 0.0,
+        float(future_pred),
+        1.0,
+    )
+    dy = max(ymax * 0.015, 200.0)
+    for xi, val in zip(x[:n] - bar_w / 2, actuals):
+        ax.text(xi, val + dy, f"{int(val):,}", ha="center", color="white", fontsize=9)
+    for xi, val in zip(x[:n] + bar_w / 2, preds):
+        ax.text(xi, val + dy, f"{int(val):,}", ha="center", color="#ffe8c8", fontsize=9)
+    ax.text(x[n], future_pred + dy, f"{int(future_pred):,}", ha="center", color="white", fontsize=9)
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, color="white")
+    ax.set_ylabel("관중 수")
+    ax.set_title(f"{stadium_name} 최근 {n}경기 실제 vs 예측 + 이번 경기")
+    ax.tick_params(colors="white")
+    ax.yaxis.label.set_color("white")
+    ax.title.set_color("white")
+    ax.legend(
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.28),
+        ncol=3,
+        fontsize=9,
+        frameon=True,
+        facecolor="#0d1a2b",
+        edgecolor="#9fb3c8",
+        labelcolor="white",
+    )
+    for spine in ax.spines.values():
+        spine.set_color("#9fb3c8")
+    plt.yticks(color="white")
+    fig.subplots_adjust(bottom=0.28)
+    st.pyplot(fig)
+    plt.close(fig)
+
+
+def _plot_ml_predictions_bar(ml_predictions: dict[str, int]) -> None:
+    """알고리즘별 예측 관중 — 피처 중요도 차트와 동일한 가로 막대 스타일."""
+    if not ml_predictions:
+        return
+    s = pd.Series({k: int(v) for k, v in ml_predictions.items()}).sort_values(ascending=True)
+    labels = list(s.index)
+    vals = s.to_numpy(dtype=float)
+    n = len(labels)
+
+    fig, ax = plt.subplots(figsize=(10, max(2.0, 0.35 * n)))
+    fig.patch.set_facecolor("#07111f")
+    ax.set_facecolor("#07111f")
+    y = np.arange(n)
+    bars = ax.barh(y, vals, color="#4f8cff", height=0.65)
+    xmax = float(vals.max()) if len(vals) else 1.0
+    dx = max(xmax * 0.015, 180.0)
+    for bar in bars:
+        w = float(bar.get_width())
+        ax.text(
+            w + dx,
+            bar.get_y() + bar.get_height() / 2,
+            f"{int(w):,}명",
+            va="center",
+            ha="left",
+            color="#e8eef5",
+            fontsize=10,
+            fontweight="medium",
+        )
+    ax.set_xlim(0, xmax * 1.22)
+    ax.set_yticks(y)
+    ax.set_yticklabels(labels, color="#e8eef5", fontsize=10)
+    ax.set_xlabel("예측 관중(명)", color="#9fb3c8", fontsize=11)
+    ax.tick_params(axis="x", colors="#9fb3c8")
+    ax.set_title("알고리즘별 예측 비교", color="white", fontsize=13)
+    for spine in ax.spines.values():
+        spine.set_color("#24384f")
+    fig.tight_layout()
+    st.pyplot(fig)
+    plt.close(fig)
+
+
 def _aggregate_rf_importance_from_pipe(pipe) -> pd.Series:
     """OneHot+수치 파이프라인에서 원본 피처명 기준으로 중요도 합산."""
     from modeling.train_model import CATEGORICAL_FEATURES, NUMERIC_FEATURES
@@ -459,7 +677,9 @@ def _ml_prediction_snapshot(
     return out
 
 
-def _plot_rf_importance_barh(imp: pd.Series, top_n: int = 15) -> plt.Figure:
+def _plot_rf_importance_barh(
+    imp: pd.Series, top_n: int = 15, *, model_label: str = "RandomForest"
+) -> plt.Figure:
     """비날씨는 상위 top_n만, 날씨 두 그룹은 값이 작아도 항상 막대에 포함."""
     s = imp.astype(float)
     rest = s.drop(labels=list(_ML_IMP_WEATHER_DISPLAY_KEYS), errors="ignore").sort_values(
@@ -488,7 +708,7 @@ def _plot_rf_importance_barh(imp: pd.Series, top_n: int = 15) -> plt.Figure:
     ax.set_xlabel("상대 기여 (전체 중 %)", color="#9fb3c8", fontsize=11)
     ax.tick_params(axis="x", colors="#9fb3c8")
     ax.set_title(
-        "RandomForest 피처 중요도 (날씨 세부는 2그룹으로 합산)",
+        f"{model_label} 피처 중요도 (날씨 세부는 2그룹으로 합산)",
         color="white",
         fontsize=13,
     )
@@ -930,40 +1150,45 @@ if ml_used:
 
     if len(ml_predictions) > 1:
         with st.expander("알고리즘별 예측 비교", expanded=True):
-            st.dataframe(
-                pd.DataFrame(
-                    [{"알고리즘": k, "예측 관중": f"{v:,}명"} for k, v in ml_predictions.items()]
-                ),
-                width="stretch",
-                hide_index=True,
+            _plot_ml_predictions_bar(ml_predictions)
+
+    _imp_options = list(ml_predictions.keys())
+
+    with st.expander("피처 중요도 · 이번 입력 요약", expanded=False):
+        if len(_imp_options) > 1:
+            _imp_model_label = st.selectbox(
+                "중요도를 볼 알고리즘",
+                options=_imp_options,
+                key="ml_feat_imp_model",
             )
+        else:
+            _imp_model_label = _imp_options[0]
 
-    _imp_model_label = "RandomForest"
-    if use_ml_rf:
-        _imp_model_label = "RandomForest"
-    elif ml_predictions:
-        _imp_model_label = next(iter(ml_predictions.keys()))
-
-    with st.expander(f"피처 중요도 · 이번 입력 요약 ({_imp_model_label})", expanded=False):
         st.markdown(
-            "아래 **막대 그래프**는 학습된 숲 전체에서 평균적으로 분할에 자주 쓰인 변수입니다. "
+            f"아래 **막대 그래프**는 **{_imp_model_label}** 학습 결과에서 "
+            "전체적으로 분할·분기에 자주 쓰인 변수입니다. "
             "강수·기온·습도·풍 세부 피처는 중요도 표에서 **두 줄(날씨 그룹)** 로 합산했습니다. "
             f"지금 화면의 **{predicted_attendance:,}명** 같은 **한 건의 예측**을 인과적으로 쪼개는 값(SHAP 등)은 아니며, "
             "모델이 전반적으로 어떤 정보에 무게를 두었는지 참고용입니다."
         )
         _imp_fname = next(
-            (fname for key, label, fname in ML_MODEL_REGISTRY if label == _imp_model_label),
-            "attendance_rf_pipeline.joblib",
+            (fname for _k, label, fname in ML_MODEL_REGISTRY if label == _imp_model_label),
+            None,
         )
-        _imp_path = PROJECT_ROOT / "models" / _imp_fname
-        try:
-            _mt = int(os.path.getmtime(_imp_path))
-        except OSError:
-            _mt = 0
-        _imp = _cached_rf_feature_importance_series(str(_imp_path), _mt)
+        _imp = pd.Series(dtype=float)
+        if _imp_fname is not None:
+            _imp_path = PROJECT_ROOT / "models" / _imp_fname
+            try:
+                _mt = int(os.path.getmtime(_imp_path))
+            except OSError:
+                _mt = 0
+            _imp = _cached_rf_feature_importance_series(str(_imp_path), _mt)
+
         if len(_imp) > 0:
             _imp_disp = _group_rf_importance_for_display(_imp)
-            _fig_imp = _plot_rf_importance_barh(_imp_disp, top_n=15)
+            _fig_imp = _plot_rf_importance_barh(
+                _imp_disp, top_n=15, model_label=_imp_model_label
+            )
             st.pyplot(_fig_imp)
             plt.close(_fig_imp)
             _p_all = (_imp_disp / _imp_disp.sum() * 100.0).round(2)
@@ -1113,46 +1338,6 @@ _wx_debug_ui = os.environ.get("STREAMLIT_DEBUG_WEATHER", "").strip().lower() in 
 from common.kbo_regular_start_time import default_start_hm
 from common import kma_vilage_fcst as kv
 
-st.markdown(
-    """
-<div class="disclaimer-under-predict">
-<b>면책·안내.</b>
-예상 관중은 <b>경기가 정상 개최된다는 전제</b>의 수요 추정이며,
-우천 취소·노게임·강우 콜드게임 등에는 적용되지 않습니다.
-동네예보(typ02)는 KBO·보도 문구와 <b>대조용 참고</b>일 뿐, 관중 예측 수치에는 넣지 않습니다.
-RandomForest 사용 시 사이드바 <b>일 합계 강수(mm)</b>·기온·습도는 모델 입력(버킷 등)에 반영됩니다.
-구장 정원은 <code>kbo_stadium_info.csv</code>를 우선합니다.
-위 요약은 안내용이며 실제 운영·규정과 다를 수 있습니다.
-</div>
-""",
-    unsafe_allow_html=True,
-)
-
-_kbo_col, _typ_col = st.columns((1, 1))
-with _kbo_col:
-    st.markdown(
-        """
-##### KBO에서 흔히 인용되는 검토 시점
-
-- **개시 3시간 전**: 시간당 **10mm 이상 예보** 등을 두고 취소·연기를 검토한다는 설명이 많습니다.  
-- **개시 1시간 전**: 시간당 **5mm 이상 실제 강우** 검토가 거론됩니다.  
-- **경기 중** 강우 중단·콜드게임·노게임(5회 전후 등)은 **공식 규정·심판 판단**입니다.
-
-위는 언론·운영 안내 수준이며 실제와 다를 수 있습니다.
-        """
-    )
-
-with _typ_col:
-    st.markdown(
-        """
-##### 동네예보(typ02) — 개시 3시간 전 참고
-
-KBO에서 말하는 **‘개시 3시간 전’** 은 보통 **예보** 기준입니다. 기상청 API허브 **동네예보(typ02)** 로
-**개시 시각 기준 3시간 전**에 가장 가까운 **초단기 1시간 강수(RN1)** 를 불러오고,
-안 되면 **단기 강수확률(POP)** 만 표시합니다. API허브에서 **초단기·단기예보** 활용신청이 된 키(`KMA_APIHUB_AUTH_KEY`)가 있어야 합니다.
-        """
-    )
-
 _h_f, _m_f = default_start_hm(game_date, game_date.year)
 _gs_fc = pd.Timestamp(
     year=game_date.year,
@@ -1163,9 +1348,21 @@ _gs_fc = pd.Timestamp(
     tz=kv.KST,
 )
 _t3 = kv.three_hours_before_game_start(_gs_fc)
-st.caption(
-    f"가정 개시 **{_gs_fc.strftime('%Y-%m-%d %H:%M')}** (KST) · "
-    f"참고 시각(개시 3시간 전) **{_t3.strftime('%Y-%m-%d %H:%M')}**"
+_gs_s = html.escape(_gs_fc.strftime("%Y-%m-%d %H:%M"))
+_t3_s = html.escape(_t3.strftime("%Y-%m-%d %H:%M"))
+st.markdown(
+    f"""
+<div class="rain-info-compact">
+<b>☂️ 우천·관중 안내</b> (관중 예측과 별개 · 참고용)
+<ul>
+<li>관중 수는 <b>정상 개최</b> 가정. 우천 취소·노게임은 반영하지 않음.</li>
+<li>언론상 검토: 개시 <b>3시간 전</b> 강우 예보 · 개시 <b>1시간 전</b> 실제 강우 (실제와 다를 수 있음).</li>
+<li>기상청 동네예보: 개시 3시간 전 <b>RN1</b>, 없으면 <b>POP</b> (API 키 필요).</li>
+</ul>
+개시 <b>{_gs_s}</b> (KST) · 참고 <b>{_t3_s}</b>
+</div>
+""",
+    unsafe_allow_html=True,
 )
 _auth_fc = os.environ.get("KMA_APIHUB_AUTH_KEY", "").strip()
 if not _auth_fc:
@@ -1201,76 +1398,43 @@ if _wx_debug_ui:
         st.json(_ref)
 
 if not _ref.get("ok"):
-    _m = str(_ref.get("msg") or "예보를 가져오지 못했습니다.")
+    _m = str(_ref.get("msg") or "예보 없음")
     _d = _ref.get("detail")
     _d_s = str(_d).strip() if _d is not None else ""
-    _body = (
+    _hint = html.escape(redact_api_secrets(_d_s)) if _d_s else ""
+    st.markdown(
         f'<div class="rain-fcst-warn">'
-        f'<div class="rain-fcst-warn-title">동네예보 참고</div>'
-        f'<p style="margin:0 0 8px 0;">{html.escape(_m)}</p>'
-    )
-    if _d_s:
-        _body += (
-            f'<p class="rain-fcst-warn-tech">({html.escape(redact_api_secrets(_d_s))})</p>'
-        )
-    _body += "</div>"
-    st.markdown(_body, unsafe_allow_html=True)
-elif _ref.get("mode") == "ultra_rn1":
-    mm = float(_ref["mm_h"])
-    _t, _b, _css = kv.rule_band_from_mm_h(mm)
-    _te = html.escape(str(_t))
-    _be = html.escape(str(_b))
-    st.markdown(
-        f'<div class="rain-risk-box rain-risk-{_css}">'
-        f'<div class="rain-risk-title">초단기예보 RN1 ≈ {mm:g} mm/h (1시간 강수)</div>'
-        f'<p style="margin:0;"><b>{_te}</b> — {_be}</p>'
-        "</div>",
+        f'<div class="rain-fcst-warn-title">동네예보</div>'
+        f'<p style="margin:0;">{html.escape(_m)}'
+        + (f" <span class=\"rain-fcst-warn-tech\">({_hint})</span>" if _hint else "")
+        + "</p></div>",
         unsafe_allow_html=True,
     )
-elif _ref.get("mode") == "vilage_pop":
-    pop = float(_ref["pop_pct"])
-    _t, _b, _css = kv.rule_band_from_pop(pop)
-    _te = html.escape(str(_t))
-    _be = html.escape(str(_b))
+else:
+    _gout = kv.rainout_cancel_guidance(_ref)
+    _gband = str(_gout["band"])
+    _wrap_g = "rain-fcst-warn" if _gband == "warn" else f"rain-risk-box rain-risk-{_gband}"
+    _head = html.escape(str(_gout["headline"]))
+    _detail = ""
+    if _ref.get("mode") == "ultra_rn1":
+        mm = float(_ref["mm_h"])
+        _detail = f"RN1 ≈ {mm:g} mm/h"
+    elif _ref.get("mode") == "vilage_pop":
+        _detail = f"POP ≈ {float(_ref['pop_pct']):.0f}%"
+    _line = ""
+    if _gout.get("lines"):
+        _line = html.escape(
+            redact_api_secrets(str(_gout["lines"][0]).replace("**", ""))
+        )
     st.markdown(
-        f'<div class="rain-risk-box rain-risk-{_css}">'
-        f'<div class="rain-risk-title">단기예보 강수확률 POP ≈ {pop:.0f}%</div>'
-        f'<p style="margin:0;"><b>{_te}</b> — {_be}</p>'
-        "</div>",
+        f'<div class="{_wrap_g}">'
+        f'<div class="rain-risk-title">{_head}</div>'
+        f'<p style="margin:6px 0 0 0;">'
+        + (f"<b>{html.escape(_detail)}</b> · " if _detail else "")
+        + (_line if _line else "비공식 참고 · 확정 아님")
+        + "</p></div>",
         unsafe_allow_html=True,
     )
-    _pop_detail = _ref.get("detail")
-    if _pop_detail:
-        st.caption(
-            "초단기 RN1은 가져오지 못해 단기 POP만 표시합니다 — "
-            + html.escape(redact_api_secrets(str(_pop_detail).strip()))
-        )
-
-_gout = kv.rainout_cancel_guidance(_ref)
-_gband = str(_gout["band"])
-_wrap_g = "rain-fcst-warn" if _gband == "warn" else f"rain-risk-box rain-risk-{_gband}"
-_gparts: list[str] = [
-    f'<div class="{_wrap_g}">',
-    f'<div class="rain-risk-title">{html.escape(str(_gout["headline"]))}</div>',
-]
-_src_g = str(_gout.get("source") or "").strip()
-if _src_g:
-    _gparts.append(
-        '<p style="margin:0 0 10px 0;font-size:12px;color:#9fb3c8;">'
-        f"{html.escape(_src_g)}</p>"
-    )
-for _ln in _gout["lines"]:
-    _gparts.append(
-        f'<p style="margin:0 0 8px 0;">{html.escape(redact_api_secrets(str(_ln)))}</p>'
-    )
-_gparts.append("</div>")
-st.markdown(
-    '<div class="sub-text" style="margin-top:18px;margin-bottom:6px;">'
-    "<b>☂️ 우천 취소·연기 참고</b> (개시 3시간 전 동네예보 기준 · 관중 수 예측과 별개)"
-    "</div>",
-    unsafe_allow_html=True,
-)
-st.markdown("\n".join(_gparts), unsafe_allow_html=True)
 
 # =========================
 # 정보 카드
@@ -1376,92 +1540,108 @@ st.caption(
 )
 
 if recent_games.empty:
-    chart_df = pd.DataFrame(
-        columns=["경기날짜", "홈팀", "방문팀", "관중수", "경기정보"]
-    )
     st.info(
         "이 구장·기준일 이전에 표시할 과거 경기가 없습니다. "
         "경기 날짜를 늦추거나 구장을 바꿔 보세요."
     )
 else:
-    chart_df = recent_games[
-        ["경기날짜", "홈팀", "방문팀", "관중수"]
-    ].copy()
-    chart_df["경기정보"] = (
-        chart_df["경기날짜"].dt.strftime("%m/%d")
-        + "\n"
-        + chart_df["홈팀"]
-        + " vs "
-        + chart_df["방문팀"]
-    )
+    hist = recent_games[["경기날짜", "홈팀", "방문팀", "관중수"]].copy()
+    if "구장" in recent_games.columns:
+        hist["구장"] = recent_games["구장"]
+    hist["경기날짜"] = pd.to_datetime(hist["경기날짜"], errors="coerce")
+    hist["관중수"] = pd.to_numeric(hist["관중수"], errors="coerce")
 
-chart_df.loc[len(chart_df)] = [
-    pd.NaT,
-    home_team,
-    away_team,
-    predicted_attendance,
-    "이번 경기 예측"
-]
+    compare_rows: list[dict] = []
+    tr_chart = _load_kbo_train_ready() if (use_ml_models and _ml_train_ok) else None
+    cap_map_chart = st.session_state.get("cap_by_stadium") or _load_app_capacity_map()
 
-fig, ax = plt.subplots(
-    figsize=(11, 4)
-)
+    if tr_chart is not None:
+        for _, r in hist.iterrows():
+            if pd.isna(r["경기날짜"]) or pd.isna(r["관중수"]):
+                continue
+            gdt = pd.Timestamp(r["경기날짜"])
+            home_h = str(r["홈팀"]).strip()
+            away_h = str(r["방문팀"]).strip()
+            st_h = str(r.get("구장", stadium)).strip() or stadium
+            actual_i = int(r["관중수"])
+            temp, rain, hum, wind = _weather_for_historical_row(df, r)
+            pred_i = _predict_ml_attendance_for_row(
+                tr_chart,
+                home=home_h,
+                away=away_h,
+                stadium_name=st_h,
+                game_date=gdt,
+                temp_c=temp,
+                rain_mm=rain,
+                hum_pct=hum,
+                wind_mps=wind,
+                cap_map=cap_map_chart,
+                ml_choice_map=_ml_choice_map,
+            )
+            if pred_i is None:
+                continue
+            compare_rows.append(
+                {
+                    "경기": f"{gdt.strftime('%m/%d')}\n{home_h} vs {away_h}",
+                    "실제": actual_i,
+                    "예측": pred_i,
+                    "오차": abs(actual_i - pred_i),
+                }
+            )
 
-fig.patch.set_facecolor("#07111f")
-ax.set_facecolor("#07111f")
-
-bars = ax.bar(
-    chart_df["경기정보"],
-    chart_df["관중수"]
-)
-
-_ymax = float(pd.to_numeric(chart_df["관중수"], errors="coerce").fillna(0).max()) or 1.0
-_label_dy = max(_ymax * 0.015, 200.0)
-
-# 마지막 예측 bar 색상 변경
-for i, bar in enumerate(bars):
-
-    if i == len(bars) - 1:
-        bar.set_color("#18e6ff")
-
+    if compare_rows:
+        compare_df = pd.DataFrame(compare_rows)
+        _plot_recent_actual_vs_predicted(
+            compare_df,
+            future_pred=predicted_attendance,
+            stadium_name=stadium,
+        )
     else:
-        bar.set_color("#4f8cff")
-
-# 막대 위 숫자 표시
-for bar in bars:
-
-    height = bar.get_height()
-
-    ax.text(
-        bar.get_x() + bar.get_width() / 2,
-        height + _label_dy,
-        f"{int(height):,}",
-        ha="center",
-        color="white",
-        fontsize=10
-    )
-
-ax.set_title(
-    f"{stadium} 최근 5경기 관중 수 + 이번 경기 예측"
-)
-
-ax.set_ylabel("관중 수")
-
-ax.tick_params(colors="white")
-
-ax.yaxis.label.set_color("white")
-
-ax.title.set_color("white")
-
-for spine in ax.spines.values():
-    spine.set_color("#9fb3c8")
-
-plt.xticks(
-    rotation=0,
-    color="white"
-)
-
-plt.yticks(color="white")
-
-st.pyplot(fig)
-plt.close(fig)
+        st.warning(
+            "ML 예측 비교를 만들지 못했습니다. 사이드바에서 **ML 알고리즘**을 켜고 "
+            "`kbo_train_ready.csv`·joblib이 있는지 확인하세요."
+        )
+        chart_df = hist.copy()
+        chart_df["경기정보"] = (
+            chart_df["경기날짜"].dt.strftime("%m/%d")
+            + "\n"
+            + chart_df["홈팀"]
+            + " vs "
+            + chart_df["방문팀"]
+        )
+        chart_df.loc[len(chart_df)] = [
+            pd.NaT,
+            home_team,
+            away_team,
+            predicted_attendance,
+            "이번 경기 예측",
+        ]
+        fig, ax = plt.subplots(figsize=(11, 4))
+        fig.patch.set_facecolor("#07111f")
+        ax.set_facecolor("#07111f")
+        bars = ax.bar(chart_df["경기정보"], chart_df["관중수"])
+        _ymax = float(pd.to_numeric(chart_df["관중수"], errors="coerce").fillna(0).max()) or 1.0
+        _label_dy = max(_ymax * 0.015, 200.0)
+        for i, bar in enumerate(bars):
+            bar.set_color("#18e6ff" if i == len(bars) - 1 else "#4f8cff")
+        for bar in bars:
+            h = bar.get_height()
+            ax.text(
+                bar.get_x() + bar.get_width() / 2,
+                h + _label_dy,
+                f"{int(h):,}",
+                ha="center",
+                color="white",
+                fontsize=10,
+            )
+        ax.set_title(f"{stadium} 최근 경기 관중 + 이번 경기 예측")
+        ax.set_ylabel("관중 수")
+        ax.tick_params(colors="white")
+        ax.yaxis.label.set_color("white")
+        ax.title.set_color("white")
+        for spine in ax.spines.values():
+            spine.set_color("#9fb3c8")
+        plt.xticks(rotation=0, color="white")
+        plt.yticks(color="white")
+        st.pyplot(fig)
+        plt.close(fig)

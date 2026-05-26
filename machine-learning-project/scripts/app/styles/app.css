@@ -169,3 +169,24 @@
     color: #9fb3c8;
     margin: 0;
 }
+
+.rain-info-compact {
+    background-color: #101d2d;
+    border: 1px solid #2a4a6f;
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin: 14px 0 10px 0;
+    font-size: 13px;
+    line-height: 1.5;
+    color: #c5d8ec;
+}
+.rain-info-compact b {
+    color: #e8f0f8;
+}
+.rain-info-compact ul {
+    margin: 8px 0 0 0;
+    padding-left: 1.1rem;
+}
+.rain-info-compact li {
+    margin-bottom: 4px;
+}
