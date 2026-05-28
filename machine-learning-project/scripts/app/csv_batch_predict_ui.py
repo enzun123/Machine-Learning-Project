@@ -920,7 +920,7 @@ def render_csv_batch_results_main(
     st.markdown("## 📊 예측 요약")
 
     _ml_labels = st.session_state.get("batch_ml_labels", ", ".join(chosen))
-    st.caption(f"예측에 **{_ml_labels}** 모델을 반영했습니다 (경기별 = 알고리즘 평균).")
+    st.caption(f"모델: **{_ml_labels}** (경기별 평균 반영)")
 
     st.markdown(
         f"""
@@ -1015,16 +1015,9 @@ def render_csv_batch_results_main(
     _algo_in_result = [c for c in _ALGO_PRED_COLS if c in result.columns]
     with st.expander("📋 경기별 상세", expanded=False):
         if len(_algo_in_result) > 1:
-            st.caption(
-                f"알고리즘별 열 + **예상 관중수(평균)(명)** "
-                f"(**{_ml_labels}** 평균) · "
-                "사이드바 ML·날씨를 바꾸면 자동 재계산됩니다."
-            )
+            st.caption(f"알고리즘별 예측값과 평균 예측값을 함께 표시합니다.")
         elif len(_algo_in_result) == 1:
-            st.caption(
-                f"예측 모델: **{_algo_in_result[0].replace('예측_', '')}** · "
-                "다른 모델도 보려면 사이드바에서 체크 후 CSV를 다시 선택하세요."
-            )
+            st.caption(f"예측 모델: **{_algo_in_result[0].replace('예측_', '')}**")
         st.dataframe(_format_result_table(result), hide_index=True, use_container_width=True)
 
     if TARGET in result.columns and "오차" in result.columns and result["오차"].notna().any():

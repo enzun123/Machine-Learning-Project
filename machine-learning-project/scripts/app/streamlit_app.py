@@ -1216,8 +1216,12 @@ wind_speed = st.sidebar.slider(
 )
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("**경기 일정 CSV** (선택)")
-st.sidebar.caption("CSV를 올리면 **아래**에 예측이 이어서 표시됩니다.")
+input_mode = st.sidebar.radio(
+    "입력 방식",
+    ["단일 입력", "CSV 업로드"],
+    horizontal=True,
+)
+st.sidebar.markdown("---")
 
 from modeling.batch_feature_builder import schedule_template_path
 from app.csv_batch_predict_ui import (
@@ -1230,24 +1234,28 @@ from app.csv_batch_predict_ui import (
 )
 
 _sched_tpl_path = schedule_template_path(PROJECT_ROOT)
-if _sched_tpl_path.is_file():
-    st.sidebar.download_button(
-        "샘플 CSV",
-        data=_sched_tpl_path.read_bytes(),
-        file_name=_sched_tpl_path.name,
-        mime="text/csv",
-        use_container_width=True,
-    )
+if input_mode == "CSV 업로드":
+    st.sidebar.markdown("**경기 일정 CSV**")
+    if _sched_tpl_path.is_file():
+        st.sidebar.download_button(
+            "샘플 CSV",
+            data=_sched_tpl_path.read_bytes(),
+            file_name=_sched_tpl_path.name,
+            mime="text/csv",
+            use_container_width=True,
+        )
 
 if "sidebar_schedule_csv_nonce" not in st.session_state:
     st.session_state["sidebar_schedule_csv_nonce"] = 0
 _uploader_key = f"sidebar_schedule_csv_{st.session_state['sidebar_schedule_csv_nonce']}"
-_schedule_csv_upload = st.sidebar.file_uploader(
-    "경기 일정 CSV",
-    type=["csv"],
-    key=_uploader_key,
-    help="필수: 경기날짜, 홈팀, 방문팀, 구장 · 올리면 자동 예측",
-)
+_schedule_csv_upload = None
+if input_mode == "CSV 업로드":
+    _schedule_csv_upload = st.sidebar.file_uploader(
+        "경기 일정 CSV",
+        type=["csv"],
+        key=_uploader_key,
+        help="필수: 경기날짜, 홈팀, 방문팀, 구장 · 올리면 자동 예측",
+    )
 
 if _schedule_csv_upload is None:
     if _batch_session_active():
@@ -1294,7 +1302,7 @@ if _batch_session_active():
         ml_train_ok=_ml_train_ok,
     )
 
-if _batch_session_active() and _schedule_csv_upload is not None:
+if input_mode == "CSV 업로드" and _batch_session_active() and _schedule_csv_upload is not None:
     if st.sidebar.button(
         "CSV 제거·초기화",
         use_container_width=True,
@@ -1308,58 +1316,64 @@ if _batch_session_active() and _schedule_csv_upload is not None:
         st.rerun()
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("**한 경기 입력**")
-game_date = st.sidebar.date_input("경기 날짜")
-st.sidebar.caption(
-    "차트·최근 경기·예측 입력의 **기준일**입니다. 당일 0시 **이전** 경기만 포함합니다."
-)
+if input_mode == "단일 입력":
+    st.sidebar.markdown("**한 경기 입력**")
+    game_date = st.sidebar.date_input("경기 날짜", key="fld_game_date")
+else:
+    game_date = st.session_state.get("fld_game_date", pd.Timestamp.today().date())
 
 _stadium_opts = sorted(df["구장"].dropna().unique())
 _home_opts = sorted(df["홈팀"].dropna().unique())
 _away_opts = sorted(df["방문팀"].dropna().unique())
 
-stadium = st.sidebar.selectbox(
-    "경기장",
-    _stadium_opts,
-    key="fld_stadium",
-    help="구장을 바꾸면 **홈팀**이 이 구장의 기본 홈(잠실→LG 등)으로 맞춰집니다.",
-)
+if input_mode == "단일 입력":
+    stadium = st.sidebar.selectbox(
+        "경기장",
+        _stadium_opts,
+        key="fld_stadium",
+        help="구장을 바꾸면 **홈팀**이 이 구장의 기본 홈(잠실→LG 등)으로 맞춰집니다.",
+    )
 
-if "_prev_stadium_for_home" not in st.session_state:
-    st.session_state._prev_stadium_for_home = None
-if st.session_state._prev_stadium_for_home != stadium:
-    st.session_state._prev_stadium_for_home = stadium
-    _dh = _default_home_team_for_stadium(stadium, df)
-    if _dh in _home_opts:
-        st.session_state.fld_home_team = _dh
-    _cur_away = st.session_state.get("fld_away_team")
-    if _cur_away is None or _cur_away == st.session_state.get("fld_home_team"):
-        for _a in _away_opts:
-            if _a != st.session_state.get("fld_home_team"):
-                st.session_state.fld_away_team = _a
-                break
+    if "_prev_stadium_for_home" not in st.session_state:
+        st.session_state._prev_stadium_for_home = None
+    if st.session_state._prev_stadium_for_home != stadium:
+        st.session_state._prev_stadium_for_home = stadium
+        _dh = _default_home_team_for_stadium(stadium, df)
+        if _dh in _home_opts:
+            st.session_state.fld_home_team = _dh
+        _cur_away = st.session_state.get("fld_away_team")
+        if _cur_away is None or _cur_away == st.session_state.get("fld_home_team"):
+            for _a in _away_opts:
+                if _a != st.session_state.get("fld_home_team"):
+                    st.session_state.fld_away_team = _a
+                    break
 
-home_team = st.sidebar.selectbox(
-    "홈팀",
-    _home_opts,
-    key="fld_home_team",
-)
+    home_team = st.sidebar.selectbox(
+        "홈팀",
+        _home_opts,
+        key="fld_home_team",
+    )
 
-away_team = st.sidebar.selectbox(
-    "원정팀",
-    _away_opts,
-    key="fld_away_team",
-)
+    away_team = st.sidebar.selectbox(
+        "원정팀",
+        _away_opts,
+        key="fld_away_team",
+    )
 
-auto_recent_kbo = st.sidebar.checkbox(
-    "최근 5경기 KBO 자동 반영",
-    value=_default_web_recent_enabled(),
-    help=(
-        "선택한 경기 날짜 이전에 치른 직전 5경기를 GraphDaily에서 가져옵니다. "
-        "Chrome·Selenium 필요(Streamlit Cloud에서는 기본 꺼짐). 꺼두면 로컬 CSV만 사용합니다. "
-        f"캐시 TTL {_KBO_RECENT_TTL}초."
-    ),
-)
+    auto_recent_kbo = st.sidebar.checkbox(
+        "최근 5경기 KBO 자동 반영",
+        value=_default_web_recent_enabled(),
+        help=(
+            "선택한 경기 날짜 이전에 치른 직전 5경기를 GraphDaily에서 가져옵니다. "
+            "Chrome·Selenium 필요(Streamlit Cloud에서는 기본 꺼짐). 꺼두면 로컬 CSV만 사용합니다. "
+            f"캐시 TTL {_KBO_RECENT_TTL}초."
+        ),
+    )
+else:
+    stadium = str(st.session_state.get("fld_stadium") or _stadium_opts[0])
+    home_team = str(st.session_state.get("fld_home_team") or _home_opts[0])
+    away_team = str(st.session_state.get("fld_away_team") or _away_opts[0])
+    auto_recent_kbo = _default_web_recent_enabled()
 
 # =========================
 # 메인 — 공통 제목·예측 방식
@@ -1369,13 +1383,25 @@ st.markdown(
     unsafe_allow_html=True,
 )
 st.markdown(
-    '<div class="sub-text">'
-    "사이드바에서 경기·날씨를 고르면 <b>한 경기 예측</b>이 표시됩니다. "
-    "<b>경기 일정 CSV</b>를 올리면 같은 화면 <b>아래</b>에 일괄 결과가 추가됩니다."
-    "</div>",
+    '<div class="sub-text">단일 입력 또는 CSV 업로드를 선택해 예측 결과를 확인하세요.</div>',
     unsafe_allow_html=True,
 )
 st.markdown("---")
+
+if input_mode == "CSV 업로드":
+    if _batch_session_active():
+        st.session_state["batch_feat_imp_renderer"] = render_ml_feature_importance_ui
+        render_csv_batch_results_main(
+            chosen=_ml_chosen_labels,
+            cap_by_stadium=st.session_state.cap_by_stadium,
+            ml_train_ok=_ml_train_ok,
+            attendance_df=df,
+            embedded=True,
+            try_kbo_scrape=not _is_streamlit_cloud(),
+        )
+    else:
+        st.info("사이드바에서 경기 일정 CSV를 업로드하면 예측 결과가 표시됩니다.")
+    st.stop()
 
 # =========================
 # 예측: 휴리스틱 + (옵션) ML 파이프라인
@@ -1997,13 +2023,3 @@ else:
         st.pyplot(fig)
         plt.close(fig)
 
-if _batch_session_active():
-    st.session_state["batch_feat_imp_renderer"] = render_ml_feature_importance_ui
-    render_csv_batch_results_main(
-        chosen=_ml_chosen_labels,
-        cap_by_stadium=st.session_state.cap_by_stadium,
-        ml_train_ok=_ml_train_ok,
-        attendance_df=df,
-        embedded=True,
-        try_kbo_scrape=not _is_streamlit_cloud(),
-    )
