@@ -728,6 +728,59 @@ def _plot_grouped_feature_importance(
     return fig
 
 
+def _plot_model_importance_panels(
+    imps_pct: dict[str, pd.Series],
+    *,
+    top_n: int = 10,
+) -> plt.Figure:
+    """모델별 개별 중요도 플롯(동일 피처 축)을 나란히 표시."""
+    keys = _feature_keys_for_grouped_chart(imps_pct, top_n=top_n)
+    labels = [_ko_ml_feature_label(str(k)) for k in keys]
+    model_names = list(imps_pct.keys())
+    n_models = max(1, len(model_names))
+    y = np.arange(len(keys))
+
+    fig, axes = plt.subplots(
+        1,
+        n_models,
+        figsize=(5.2 * n_models, max(4.2, 0.42 * len(keys))),
+        sharey=True,
+    )
+    if n_models == 1:
+        axes = [axes]
+
+    fig.patch.set_facecolor("#07111f")
+    for i, (ax, name) in enumerate(zip(axes, model_names)):
+        vals = [float(imps_pct[name].get(k, 0.0)) for k in keys]
+        ax.set_facecolor("#07111f")
+        ax.barh(
+            y,
+            vals,
+            color=_IMP_MODEL_BAR_COLORS.get(name, "#9fb3c8"),
+            height=0.62,
+        )
+        ax.set_title(name, color="white", fontsize=12, pad=6)
+        ax.tick_params(axis="x", colors="#9fb3c8", labelsize=9)
+        if i == 0:
+            ax.set_yticks(y)
+            ax.set_yticklabels(labels, color="#e8eef5", fontsize=9)
+        else:
+            ax.tick_params(axis="y", left=False, labelleft=False)
+        ax.invert_yaxis()
+        ax.set_xlabel("%", color="#9fb3c8", fontsize=10)
+        for spine in ax.spines.values():
+            spine.set_color("#24384f")
+
+    fig.suptitle(
+        "모델별 피처 중요도 (동일 피처 축)",
+        color="white",
+        fontsize=13,
+        y=0.98,
+    )
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    return fig
+
+
 def _load_importance_pct_for_model(model_label: str) -> pd.Series:
     imp_fname = next(
         (fname for _k, label, fname in ML_MODEL_REGISTRY if label == model_label),
@@ -979,6 +1032,10 @@ def render_ml_feature_importance_ui(
             return
 
         if len(imps_pct) > 1:
+            fig_panel = _plot_model_importance_panels(imps_pct, top_n=10)
+            st.pyplot(fig_panel)
+            plt.close(fig_panel)
+
             fig_imp = _plot_grouped_feature_importance(imps_pct, top_n=12)
             st.pyplot(fig_imp)
             plt.close(fig_imp)
