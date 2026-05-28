@@ -102,7 +102,7 @@ _ensure_korean_matplotlib_font()
 # 데이터 불러오기
 # =========================
 @st.cache_data
-def load_data():
+def load_data(_data_fp: str):
 
     BASE_DIR = Path(__file__).resolve().parent
     root = BASE_DIR.parent.parent
@@ -228,8 +228,12 @@ def _load_app_capacity_map() -> dict[str, int]:
 
 
 def _ensure_session_data() -> None:
-    if "df" not in st.session_state:
-        st.session_state.df = load_data()
+    from common.attendance_parse import attendance_sources_fingerprint
+
+    fp = attendance_sources_fingerprint(PROJECT_ROOT)
+    if st.session_state.get("df_data_fp") != fp or "df" not in st.session_state:
+        st.session_state.df = load_data(fp)
+        st.session_state.df_data_fp = fp
     # kbo_stadium_info / kbo_train_ready 갱신 시 정원 반영 (세션에 예전 값 고정 방지)
     st.session_state.cap_by_stadium = _load_app_capacity_map()
 
@@ -321,7 +325,7 @@ def _weather_for_historical_row(attendance_df: pd.DataFrame, row: pd.Series) -> 
     )
 
 
-def _predict_ml_attendance_for_row(
+def _predict_ml_attendance_by_model_for_row(
     tr: pd.DataFrame,
     *,
     home: str,
@@ -334,13 +338,13 @@ def _predict_ml_attendance_for_row(
     wind_mps: float,
     cap_map: dict[str, int],
     ml_choice_map: dict[str, bool],
-) -> int | None:
-    """단일 과거 경기 ML 예측(선택 모델 평균)."""
+) -> dict[str, int]:
+    """단일 과거 경기 — 선택 모델별 예측."""
     from common.stadium_capacity import venue_clip_capacity
     from modeling.batch_feature_builder import build_ml_feature_dataframe
 
     cap_hi = max(1, venue_clip_capacity(stadium_name, home, cap_map))
-    preds: list[int] = []
+    out: dict[str, int] = {}
     try:
         X = build_ml_feature_dataframe(
             tr,
@@ -357,20 +361,51 @@ def _predict_ml_attendance_for_row(
         for col in X.columns:
             if X[col].dtype == object:
                 X[col] = X[col].astype(str).fillna("missing")
-        for key, _label, fname in ML_MODEL_REGISTRY:
+        for key, label, fname in ML_MODEL_REGISTRY:
             if not ml_choice_map.get(key):
                 continue
             pipe = _load_ml_pipeline(fname)
             if pipe is None:
                 continue
             raw = float(np.asarray(pipe.predict(X))[0])
-            preds.append(min(int(round(max(0.0, raw))), cap_hi))
+            out[label] = min(int(round(max(0.0, raw))), cap_hi)
     except Exception as e:
         logger.warning("과거 경기 ML 예측 실패 (%s vs %s): %s", home, away, e)
+        return {}
+    return out
+
+
+def _predict_ml_attendance_for_row(
+    tr: pd.DataFrame,
+    *,
+    home: str,
+    away: str,
+    stadium_name: str,
+    game_date,
+    temp_c: float,
+    rain_mm: float,
+    hum_pct: float,
+    wind_mps: float,
+    cap_map: dict[str, int],
+    ml_choice_map: dict[str, bool],
+) -> int | None:
+    """단일 과거 경기 ML 예측(선택 모델 평균)."""
+    by_model = _predict_ml_attendance_by_model_for_row(
+        tr,
+        home=home,
+        away=away,
+        stadium_name=stadium_name,
+        game_date=game_date,
+        temp_c=temp_c,
+        rain_mm=rain_mm,
+        hum_pct=hum_pct,
+        wind_mps=wind_mps,
+        cap_map=cap_map,
+        ml_choice_map=ml_choice_map,
+    )
+    if not by_model:
         return None
-    if not preds:
-        return None
-    return int(round(float(np.mean(preds))))
+    return int(round(float(np.mean(list(by_model.values())))))
 
 
 def _selected_match_chart_label(
@@ -382,6 +417,56 @@ def _selected_match_chart_label(
     return f"{d}\n{home_team} vs {away_team}\n(예측)"
 
 
+def _ordered_ml_predictions(preds: dict[str, int]) -> list[tuple[str, int]]:
+    order = [label for _k, label, _fname in ML_MODEL_REGISTRY if label in preds]
+    return [(label, int(preds[label])) for label in order]
+
+
+_ACTUAL_BAR_COLOR = "#4f8cff"
+_PRED_BAR_COLOR_SINGLE = "#f59e0b"  # 단일 모델 예측 — 실제 막대와 구분
+
+
+def _model_bar_color(label: str) -> str:
+    return {
+        "RandomForest": "#a78bfa",
+        "LightGBM": "#22c55e",
+        "XGBoost": "#f97316",
+    }.get(label, "#f59e0b")
+
+
+def _slot_bar_layout(n_bars: int, *, span: float = 0.9, width_ratio: float = 0.72) -> tuple[list[float], float]:
+    """슬롯 중심 기준 막대 중심 오프셋·막대 너비 (겹침 방지용 간격 포함)."""
+    if n_bars <= 0:
+        return [], 0.0
+    bar_w = (span / n_bars) * width_ratio
+    if n_bars == 1:
+        return [0.0], bar_w * 1.05
+    step = span / n_bars
+    offs = [-span / 2 + step / 2 + i * step for i in range(n_bars)]
+    return offs, bar_w
+
+
+def _draw_bars_at_slot(
+    ax,
+    xi: float,
+    bars: list[tuple[str, int, str]],
+    *,
+    legend_seen: set[str],
+) -> tuple[float, list[float]]:
+    """한 경기 슬롯에 막대 그룹. (ymax, 각 막대 중심 오프셋) 반환."""
+    if not bars:
+        return 0.0, []
+    offs, bw = _slot_bar_layout(len(bars))
+    ymax = 0.0
+    for off, (label, val, color) in zip(offs, bars):
+        leg = label if label not in legend_seen else "_nolegend_"
+        if leg != "_nolegend_":
+            legend_seen.add(label)
+        ax.bar(xi + off, val, bw, label=leg, color=color)
+        ymax = max(ymax, float(val))
+    return ymax, offs
+
+
 def _plot_recent_actual_vs_predicted(
     compare: pd.DataFrame,
     *,
@@ -390,10 +475,31 @@ def _plot_recent_actual_vs_predicted(
     game_date: object | None = None,
     home_team: str | None = None,
     away_team: str | None = None,
+    future_preds: dict[str, int] | None = None,
 ) -> None:
-    """최근 N경기 실제·예측 막대 비교 + 이번 경기 예측 1막대."""
+    """최근 N경기 실제·예측 막대 + 선택 경기(알고리즘별 막대 또는 단일 예측)."""
     n = len(compare)
-    fig, ax = plt.subplots(figsize=(max(9, n * 1.6 + 2.5), 4.4))
+    future_items = _ordered_ml_predictions(future_preds) if future_preds else []
+    n_slots = n + 1
+    if "예측_모델" in compare.columns:
+        slot_models = [
+            v if isinstance(v, dict) else {}
+            for v in compare["예측_모델"].tolist()
+        ]
+    else:
+        slot_models = [{}] * n
+
+    max_bars_per_slot = 1
+    for i in range(n):
+        items = _ordered_ml_predictions(slot_models[i])
+        max_bars_per_slot = max(max_bars_per_slot, 1 + len(items) if items else 2)
+    if future_items:
+        max_bars_per_slot = max(max_bars_per_slot, len(future_items))
+    slot_w = 2.35 if max_bars_per_slot >= 4 else 2.0 if max_bars_per_slot >= 3 else 1.9
+    fig_w = min(18.0, max(12.0, n_slots * slot_w))
+    fig_h = 7.8
+
+    fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=120)
     fig.patch.set_facecolor("#07111f")
     ax.set_facecolor("#07111f")
 
@@ -403,64 +509,100 @@ def _plot_recent_actual_vs_predicted(
         future_lbl = "이번 경기\n(예측)"
     labels = compare["경기"].tolist() + [future_lbl]
     x = np.arange(len(labels))
-    bar_w = 0.36
 
     actuals = compare["실제"].to_numpy(dtype=float)
     preds = compare["예측"].to_numpy(dtype=float)
 
-    ax.bar(
-        x[:n] - bar_w / 2,
-        actuals,
-        bar_w,
-        label="실제(기록실)",
-        color="#4f8cff",
-    )
-    ax.bar(
-        x[:n] + bar_w / 2,
-        preds,
-        bar_w,
-        label="예측(ML)",
-        color="#f59e0b",
-    )
-    ax.bar(
-        x[n],
-        future_pred,
-        bar_w * 1.6,
-        label="이번 경기 예측",
-        color="#18e6ff",
-    )
+    def _hist_slot_bars(i: int) -> list[tuple[str, int, str]]:
+        bars: list[tuple[str, int, str]] = [
+            ("실제(기록실)", int(actuals[i]), _ACTUAL_BAR_COLOR),
+        ]
+        items = _ordered_ml_predictions(slot_models[i])
+        if items:
+            if len(items) == 1:
+                label, val = items[0]
+                bars.append((label, val, _PRED_BAR_COLOR_SINGLE))
+            else:
+                for label, val in items:
+                    bars.append((label, val, _model_bar_color(label)))
+        elif i < len(preds) and not np.isnan(preds[i]):
+            bars.append(("예측(ML 평균)", int(preds[i]), _PRED_BAR_COLOR_SINGLE))
+        return bars
 
+    def _future_slot_bars() -> list[tuple[str, int, str]]:
+        if not future_items:
+            return [("이번 경기 예측", int(future_pred), "#18e6ff")]
+        if len(future_items) == 1:
+            label, val = future_items[0]
+            return [(label, val, _PRED_BAR_COLOR_SINGLE)]
+        return [(label, val, _model_bar_color(label)) for label, val in future_items]
+
+    legend_seen: set[str] = set()
+    slot_drawn: list[tuple[float, list[tuple[str, int, str]], list[float]]] = []
     ymax = max(
         float(np.nanmax(actuals)) if len(actuals) else 0.0,
-        float(np.nanmax(preds)) if len(preds) else 0.0,
+        float(np.nanmax(preds)) if len(preds) and not np.all(np.isnan(preds)) else 0.0,
         float(future_pred),
         1.0,
     )
-    dy = max(ymax * 0.015, 200.0)
-    for xi, val in zip(x[:n] - bar_w / 2, actuals):
-        ax.text(xi, val + dy, f"{int(val):,}", ha="center", color="white", fontsize=9)
-    for xi, val in zip(x[:n] + bar_w / 2, preds):
-        ax.text(xi, val + dy, f"{int(val):,}", ha="center", color="#ffe8c8", fontsize=9)
-    ax.text(x[n], future_pred + dy, f"{int(future_pred):,}", ha="center", color="white", fontsize=9)
+    for i in range(n):
+        bars = _hist_slot_bars(i)
+        y_slot, offs = _draw_bars_at_slot(ax, x[i], bars, legend_seen=legend_seen)
+        ymax = max(ymax, y_slot)
+        slot_drawn.append((x[i], bars, offs))
+
+    future_bars = _future_slot_bars()
+    y_fut, fut_offs = _draw_bars_at_slot(ax, x[n], future_bars, legend_seen=legend_seen)
+    ymax = max(ymax, y_fut)
+
+    dy = max(ymax * 0.018, 280.0)
+    val_fs = 9 if max_bars_per_slot >= 4 else 10 if max_bars_per_slot >= 3 else 12
+    for xi, bars, offs in slot_drawn:
+        for off, (_label, val, _color) in zip(offs, bars):
+            ax.text(
+                xi + off,
+                val + dy,
+                f"{int(val):,}",
+                ha="center",
+                color="white",
+                fontsize=val_fs,
+            )
+
+    for off, (_label, val, _color) in zip(fut_offs, future_bars):
+        ax.text(
+            x[n] + off,
+            val + dy,
+            f"{int(val):,}",
+            ha="center",
+            color="white",
+            fontsize=val_fs,
+        )
 
     ax.set_xticks(x)
-    ax.set_xticklabels(labels, color="white", fontsize=8)
-    ax.set_ylabel("관중 수")
+    ax.set_xticklabels(labels, color="white", fontsize=10)
+    ax.set_ylabel("관중 수", fontsize=13)
+    title_fs = 14
     if game_date is not None and home_team and away_team:
         ax.set_title(
             f"{stadium_name} 최근 {n}경기 실제 vs 예측 + "
-            f"{pd.Timestamp(game_date).strftime('%Y-%m-%d')} {home_team} vs {away_team}"
+            f"{pd.Timestamp(game_date).strftime('%Y-%m-%d')} {home_team} vs {away_team}",
+            fontsize=title_fs,
+            pad=14,
         )
     else:
-        ax.set_title(f"{stadium_name} 최근 {n}경기 실제 vs 예측 + 이번 경기")
-    ax.tick_params(colors="white")
+        ax.set_title(
+            f"{stadium_name} 최근 {n}경기 실제 vs 예측 + 이번 경기",
+            fontsize=title_fs,
+            pad=14,
+        )
+    ax.tick_params(colors="white", labelsize=11)
     ax.yaxis.label.set_color("white")
     ax.title.set_color("white")
     ax.legend(
         loc="upper center",
-        bbox_to_anchor=(0.5, -0.28),
-        ncol=3,
-        fontsize=9,
+        bbox_to_anchor=(0.5, -0.26),
+        ncol=min(5, 2 + len(future_items)),
+        fontsize=11,
         frameon=True,
         facecolor="#0d1a2b",
         edgecolor="#9fb3c8",
@@ -469,54 +611,13 @@ def _plot_recent_actual_vs_predicted(
     for spine in ax.spines.values():
         spine.set_color("#9fb3c8")
     plt.yticks(color="white")
-    fig.subplots_adjust(bottom=0.28)
-    st.pyplot(fig)
+    fig.subplots_adjust(bottom=0.30, top=0.90, left=0.08, right=0.98)
+    st.pyplot(fig, use_container_width=True)
     plt.close(fig)
 
 
-def _plot_ml_predictions_bar(ml_predictions: dict[str, int]) -> None:
-    """알고리즘별 예측 관중 — 피처 중요도 차트와 동일한 가로 막대 스타일."""
-    if not ml_predictions:
-        return
-    s = pd.Series({k: int(v) for k, v in ml_predictions.items()}).sort_values(ascending=True)
-    labels = list(s.index)
-    vals = s.to_numpy(dtype=float)
-    n = len(labels)
-
-    fig, ax = plt.subplots(figsize=(10, max(2.0, 0.35 * n)))
-    fig.patch.set_facecolor("#07111f")
-    ax.set_facecolor("#07111f")
-    y = np.arange(n)
-    bars = ax.barh(y, vals, color="#4f8cff", height=0.65)
-    xmax = float(vals.max()) if len(vals) else 1.0
-    dx = max(xmax * 0.015, 180.0)
-    for bar in bars:
-        w = float(bar.get_width())
-        ax.text(
-            w + dx,
-            bar.get_y() + bar.get_height() / 2,
-            f"{int(w):,}명",
-            va="center",
-            ha="left",
-            color="#e8eef5",
-            fontsize=10,
-            fontweight="medium",
-        )
-    ax.set_xlim(0, xmax * 1.22)
-    ax.set_yticks(y)
-    ax.set_yticklabels(labels, color="#e8eef5", fontsize=10)
-    ax.set_xlabel("예측 관중(명)", color="#9fb3c8", fontsize=11)
-    ax.tick_params(axis="x", colors="#9fb3c8")
-    ax.set_title("알고리즘별 예측 비교", color="white", fontsize=13)
-    for spine in ax.spines.values():
-        spine.set_color("#24384f")
-    fig.tight_layout()
-    st.pyplot(fig)
-    plt.close(fig)
-
-
-def _aggregate_rf_importance_from_pipe(pipe) -> pd.Series:
-    """OneHot+수치 파이프라인에서 원본 피처명 기준으로 중요도 합산."""
+def _aggregate_tree_importance_from_pipe(pipe) -> pd.Series:
+    """OneHot+수치 파이프라인에서 원본 피처명 기준으로 중요도 합산 (RF/LGBM/XGB 공통)."""
     from modeling.train_model import CATEGORICAL_FEATURES, NUMERIC_FEATURES
 
     reg = pipe.regressor_
@@ -536,12 +637,113 @@ def _aggregate_rf_importance_from_pipe(pipe) -> pd.Series:
 
 
 @st.cache_data(show_spinner=False)
-def _cached_rf_feature_importance_series(model_path_str: str, mtime_key: int) -> pd.Series:
+def _cached_tree_feature_importance_series(model_path_str: str, mtime_key: int) -> pd.Series:
     p = Path(model_path_str)
     if not p.exists():
         return pd.Series(dtype=float)
     pipe = joblib.load(p)
-    return _aggregate_rf_importance_from_pipe(pipe)
+    return _aggregate_tree_importance_from_pipe(pipe)
+
+
+_IMP_MODEL_BAR_COLORS: dict[str, str] = {
+    "RandomForest": "#4f8cff",
+    "LightGBM": "#22c55e",
+    "XGBoost": "#f97316",
+}
+
+
+def _importance_pct_grouped(imp: pd.Series) -> pd.Series:
+    g = _group_rf_importance_for_display(imp)
+    tot = float(g.sum()) or 1.0
+    return (g / tot * 100.0).astype(float)
+
+
+def _feature_keys_for_grouped_chart(imps_pct: dict[str, pd.Series], top_n: int = 12) -> list[str]:
+    scores: dict[str, float] = {}
+    for imp_pct in imps_pct.values():
+        rest = (
+            imp_pct.drop(labels=list(_ML_IMP_WEATHER_DISPLAY_KEYS), errors="ignore")
+            .sort_values(ascending=False)
+            .head(top_n)
+        )
+        for k, v in rest.items():
+            scores[k] = max(scores.get(k, 0.0), float(v))
+    keys = sorted(scores.keys(), key=lambda k: scores[k], reverse=True)[:top_n]
+    for wk in _ML_IMP_WEATHER_DISPLAY_KEYS:
+        if wk not in keys:
+            keys.append(wk)
+    return keys
+
+
+def _plot_grouped_feature_importance(
+    imps_pct: dict[str, pd.Series],
+    *,
+    top_n: int = 12,
+) -> plt.Figure:
+    """선택한 알고리즘별 피처 중요도(%) — 가로 grouped bar."""
+    keys = _feature_keys_for_grouped_chart(imps_pct, top_n=top_n)
+    labels = [_ko_ml_feature_label(str(k)) for k in keys]
+    n_feat = len(keys)
+    model_names = list(imps_pct.keys())
+    n_models = len(model_names)
+    y = np.arange(n_feat)
+    group_h = 0.78
+    bar_h = group_h / max(n_models, 1)
+
+    fig, ax = plt.subplots(figsize=(10, max(4.0, 0.38 * n_feat)))
+    fig.patch.set_facecolor("#07111f")
+    ax.set_facecolor("#07111f")
+
+    for i, name in enumerate(model_names):
+        vals = [float(imps_pct[name].get(k, 0.0)) for k in keys]
+        offset = (i - (n_models - 1) / 2) * bar_h
+        ax.barh(
+            y + offset,
+            vals,
+            bar_h * 0.92,
+            label=name,
+            color=_IMP_MODEL_BAR_COLORS.get(name, "#9fb3c8"),
+        )
+
+    ax.set_yticks(y)
+    ax.set_yticklabels(labels, color="#e8eef5", fontsize=10)
+    ax.set_xlabel("상대 기여 (모델 내 %)", color="#9fb3c8", fontsize=11)
+    ax.tick_params(axis="x", colors="#9fb3c8")
+    ax.set_title(
+        "알고리즘별 피처 중요도 비교 (날씨 세부는 2그룹 합산)",
+        color="white",
+        fontsize=13,
+    )
+    ax.legend(
+        loc="lower right",
+        fontsize=9,
+        frameon=True,
+        facecolor="#0d1a2b",
+        edgecolor="#9fb3c8",
+        labelcolor="white",
+    )
+    for spine in ax.spines.values():
+        spine.set_color("#24384f")
+    fig.tight_layout()
+    return fig
+
+
+def _load_importance_pct_for_model(model_label: str) -> pd.Series:
+    imp_fname = next(
+        (fname for _k, label, fname in ML_MODEL_REGISTRY if label == model_label),
+        None,
+    )
+    if imp_fname is None:
+        return pd.Series(dtype=float)
+    imp_path = PROJECT_ROOT / "models" / imp_fname
+    try:
+        mt = int(os.path.getmtime(imp_path))
+    except OSError:
+        mt = 0
+    imp = _cached_tree_feature_importance_series(str(imp_path), mt)
+    if len(imp) == 0:
+        return pd.Series(dtype=float)
+    return _importance_pct_grouped(imp)
 
 
 _ML_FEAT_LABEL_KO: dict[str, str] = {
@@ -759,57 +961,60 @@ def render_ml_feature_importance_ui(
         return
 
     with st.expander("피처 중요도", expanded=False):
-        if len(model_labels) > 1:
-            imp_model_label = st.selectbox(
-                "중요도를 볼 알고리즘",
-                options=model_labels,
-                key=selectbox_key,
-            )
-        else:
-            imp_model_label = model_labels[0]
-
         st.markdown(
-            f"아래 **막대 그래프**는 **{imp_model_label}** 학습 결과에서 "
             "전체적으로 분할·분기에 자주 쓰인 변수입니다. "
-            "강수·기온·습도·풍 세부 피처는 중요도 표에서 **두 줄(날씨 그룹)** 로 합산했습니다. "
+            "강수·기온·습도·풍 세부 피처는 **두 줄(날씨 그룹)** 으로 합산했습니다. "
             f"{context_note} "
-            "**한 건·한 경기를 인과적으로 쪼개는 값(SHAP 등)은 아니며**, "
-            "모델이 전반적으로 어떤 정보에 무게를 두었는지 참고용입니다."
+            "**SHAP 등 인과 분해가 아닌** 학습 모델 기준 참고용입니다."
         )
-        imp_fname = next(
-            (fname for _k, label, fname in ML_MODEL_REGISTRY if label == imp_model_label),
-            None,
-        )
-        imp = pd.Series(dtype=float)
-        if imp_fname is not None:
-            imp_path = PROJECT_ROOT / "models" / imp_fname
-            try:
-                mt = int(os.path.getmtime(imp_path))
-            except OSError:
-                mt = 0
-            imp = _cached_rf_feature_importance_series(str(imp_path), mt)
 
-        if len(imp) > 0:
-            imp_disp = _group_rf_importance_for_display(imp)
+        imps_pct: dict[str, pd.Series] = {}
+        for label in model_labels:
+            pct = _load_importance_pct_for_model(label)
+            if len(pct) > 0:
+                imps_pct[label] = pct
+
+        if not imps_pct:
+            st.info("피처 중요도를 불러오지 못했습니다.")
+            return
+
+        if len(imps_pct) > 1:
+            fig_imp = _plot_grouped_feature_importance(imps_pct, top_n=12)
+            st.pyplot(fig_imp)
+            plt.close(fig_imp)
+
+            keys = _feature_keys_for_grouped_chart(imps_pct, top_n=15)
+            tbl_rows: list[dict[str, object]] = []
+            for k in keys:
+                row: dict[str, object] = {"피처": _ko_ml_feature_label(str(k))}
+                for label in model_labels:
+                    row[label] = round(float(imps_pct.get(label, pd.Series(dtype=float)).get(k, 0.0)), 2)
+                tbl_rows.append(row)
+            st.dataframe(pd.DataFrame(tbl_rows), width="stretch", hide_index=True)
+        else:
+            only_label = next(iter(imps_pct))
+            imp_fname = next(
+                (fname for _k, label, fname in ML_MODEL_REGISTRY if label == only_label),
+                None,
+            )
+            imp_raw = pd.Series(dtype=float)
+            if imp_fname is not None:
+                imp_path = PROJECT_ROOT / "models" / imp_fname
+                try:
+                    mt = int(os.path.getmtime(imp_path))
+                except OSError:
+                    mt = 0
+                imp_raw = _cached_tree_feature_importance_series(str(imp_path), mt)
+            imp_disp = _group_rf_importance_for_display(imp_raw)
             fig_imp = _plot_rf_importance_barh(
-                imp_disp, top_n=15, model_label=imp_model_label
+                imp_disp, top_n=15, model_label=only_label
             )
             st.pyplot(fig_imp)
             plt.close(fig_imp)
-            p_all = (imp_disp / imp_disp.sum() * 100.0).round(2)
-            w_fix = p_all.reindex(list(_ML_IMP_WEATHER_DISPLAY_KEYS)).fillna(0.0)
-            rest_tbl = (
-                p_all.drop(labels=list(_ML_IMP_WEATHER_DISPLAY_KEYS), errors="ignore")
-                .sort_values(ascending=False)
-                .head(20)
-            )
-            pct = pd.concat([w_fix, rest_tbl])
-            tbl = pct.reset_index()
+            tbl = imp_disp.sort_values(ascending=False).head(20).reset_index()
             tbl.columns = ["피처", "기여(%)"]
             tbl["피처"] = tbl["피처"].map(lambda x: _ko_ml_feature_label(str(x)))
             st.dataframe(tbl, width="stretch", hide_index=True)
-        else:
-            st.info("피처 중요도를 불러오지 못했습니다.")
 
 
 @st.cache_resource
@@ -954,13 +1159,17 @@ wind_speed = st.sidebar.slider(
 )
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("**일정 CSV**")
-st.sidebar.caption("샘플 형식 확인 후 CSV를 올리면 **자동으로 예측 결과** 화면으로 이동합니다.")
+st.sidebar.markdown("**경기 일정 CSV** (선택)")
+st.sidebar.caption("CSV를 올리면 **아래**에 예측이 이어서 표시됩니다.")
 
 from modeling.batch_feature_builder import schedule_template_path
 from app.csv_batch_predict_ui import (
-    process_sidebar_schedule_csv,
+    clear_batch_schedule_session,
+    maybe_refresh_batch_predictions,
+    on_sidebar_schedule_upload_cleared,
     render_csv_batch_results_main,
+    try_auto_apply_schedule_csv,
+    _batch_session_active,
 )
 
 _sched_tpl_path = schedule_template_path(PROJECT_ROOT)
@@ -973,28 +1182,79 @@ if _sched_tpl_path.is_file():
         use_container_width=True,
     )
 
+if "sidebar_schedule_csv_nonce" not in st.session_state:
+    st.session_state["sidebar_schedule_csv_nonce"] = 0
+_uploader_key = f"sidebar_schedule_csv_{st.session_state['sidebar_schedule_csv_nonce']}"
 _schedule_csv_upload = st.sidebar.file_uploader(
     "경기 일정 CSV",
     type=["csv"],
-    key="sidebar_schedule_csv",
-    help="필수: 경기날짜, 홈팀, 방문팀, 구장",
+    key=_uploader_key,
+    help="필수: 경기날짜, 홈팀, 방문팀, 구장 · 올리면 자동 예측",
 )
 
-_batch_show_main = process_sidebar_schedule_csv(
-    _schedule_csv_upload,
-    _ml_chosen_labels,
-    default_temp=float(temperature),
-    default_rain=float(rainfall_mm),
-    default_hum=float(humidity),
-    cap_by_stadium=st.session_state.cap_by_stadium,
-    ml_train_ok=_ml_train_ok,
-)
+if _schedule_csv_upload is None:
+    if _batch_session_active():
+        on_sidebar_schedule_upload_cleared()
+        st.session_state.pop("_csv_apply_error", None)
+        st.rerun()
+else:
+    _csv_sig = f"{_schedule_csv_upload.name}:{_schedule_csv_upload.size}"
+    from app.csv_batch_predict_ui import _ml_models_session_key as _batch_ml_models_key
+
+    _ml_key = _batch_ml_models_key(_ml_chosen_labels)
+    _csv_needs_run = (
+        st.session_state.get("batch_upload_sig") != _csv_sig
+        or "batch_attendance_result" not in st.session_state
+        or st.session_state.get("batch_ml_models_key") != _ml_key
+    )
+    if _csv_needs_run:
+        with st.spinner("일정 CSV 예측 중…"):
+            _csv_err = try_auto_apply_schedule_csv(
+                _schedule_csv_upload,
+                _ml_chosen_labels,
+                default_temp=float(temperature),
+                default_rain=float(rainfall_mm),
+                default_hum=float(humidity),
+                cap_by_stadium=st.session_state.cap_by_stadium,
+                ml_train_ok=_ml_train_ok,
+            )
+        if _csv_err:
+            st.session_state["_csv_apply_error"] = _csv_err
+            st.session_state["batch_upload_sig"] = _csv_sig
+        else:
+            st.session_state.pop("_csv_apply_error", None)
+
+if st.session_state.get("_csv_apply_error"):
+    st.sidebar.error(st.session_state["_csv_apply_error"])
+
+if _batch_session_active():
+    maybe_refresh_batch_predictions(
+        _ml_chosen_labels,
+        default_temp=float(temperature),
+        default_rain=float(rainfall_mm),
+        default_hum=float(humidity),
+        cap_map=st.session_state.cap_by_stadium,
+        ml_train_ok=_ml_train_ok,
+    )
+
+if _batch_session_active() and _schedule_csv_upload is not None:
+    if st.sidebar.button(
+        "CSV 제거·초기화",
+        use_container_width=True,
+        key="btn_clear_batch_schedule",
+    ):
+        # 파일 업로더 자체를 비우기 위해 key nonce 회전
+        st.session_state["sidebar_schedule_csv_nonce"] = (
+            int(st.session_state.get("sidebar_schedule_csv_nonce", 0)) + 1
+        )
+        clear_batch_schedule_session()
+        st.rerun()
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("**한 경기 입력**")
 game_date = st.sidebar.date_input("경기 날짜")
 st.sidebar.caption(
-    "차트·최근 경기 자동 반영·예측 입력의 **기준일**입니다. 당일 0시 **이전** 경기만 포함합니다."
+    "차트·최근 경기·예측 입력의 **기준일**입니다. 당일 0시 **이전** 경기만 포함합니다."
 )
 
 _stadium_opts = sorted(df["구장"].dropna().unique())
@@ -1044,17 +1304,24 @@ auto_recent_kbo = st.sidebar.checkbox(
     ),
 )
 
-if _batch_show_main:
-    st.session_state["batch_feat_imp_renderer"] = render_ml_feature_importance_ui
-    render_csv_batch_results_main(
-        chosen=_ml_chosen_labels,
-        cap_by_stadium=st.session_state.cap_by_stadium,
-        ml_train_ok=_ml_train_ok,
-    )
-    st.stop()
+# =========================
+# 메인 — 공통 제목·예측 방식
+# =========================
+st.markdown(
+    '<div class="main-title">📈 KBO 관람 수요 예측 시스템</div>',
+    unsafe_allow_html=True,
+)
+st.markdown(
+    '<div class="sub-text">'
+    "사이드바에서 경기·날씨를 고르면 <b>한 경기 예측</b>이 표시됩니다. "
+    "<b>경기 일정 CSV</b>를 올리면 같은 화면 <b>아래</b>에 일괄 결과가 추가됩니다."
+    "</div>",
+    unsafe_allow_html=True,
+)
+st.markdown("---")
 
 # =========================
-# 예측: 휴리스틱 + (옵션) RF 파이프라인
+# 예측: 휴리스틱 + (옵션) ML 파이프라인
 # =========================
 home_slice = df[
     (df["구장"] == stadium)
@@ -1143,6 +1410,7 @@ ml_used = False
 ml_row_snapshot: dict[str, object] | None = None
 ml_predictions: dict[str, int] = {}
 predicted_attendance = predicted_heuristic
+_single_game_result_row: pd.DataFrame | None = None
 
 if use_ml_models and _ml_train_ok:
 
@@ -1203,13 +1471,12 @@ if ml_used:
 
     _ml_labels = ", ".join(ml_predictions.keys())
     if len(ml_predictions) > 1:
-        st.caption(f"예측에 **{_ml_labels}** 모델을 반영했습니다 (표시값 = 알고리즘별 예측 **평균**).")
+        st.caption(
+            f"예측에 **{_ml_labels}** 모델을 반영했습니다. "
+            f"큰 숫자는 **평균**, 차트 맨 오른쪽은 **알고리즘별** 막대입니다."
+        )
     else:
         st.caption(f"예측에 **{_ml_labels}** 모델을 반영했습니다.")
-
-    if len(ml_predictions) > 1:
-        with st.expander("알고리즘별 예측 비교", expanded=True):
-            _plot_ml_predictions_bar(ml_predictions)
 
     render_ml_feature_importance_ui(
         list(ml_predictions.keys()),
@@ -1275,6 +1542,33 @@ else:
             "`benchmark_models.py` 실행 또는 체크박스 도움말(?)을 확인하세요."
         )
 
+# CSV 일괄 예측과 합쳐 볼 수 있도록 현재 사이드바 입력도 1행으로 구성
+try:
+    _gdt_norm = pd.Timestamp(game_date).normalize()
+    _mask_single = (
+        (pd.to_datetime(df["경기날짜"], errors="coerce").dt.normalize() == _gdt_norm)
+        & (df["홈팀"].astype(str).str.strip() == str(home_team).strip())
+        & (df["방문팀"].astype(str).str.strip() == str(away_team).strip())
+        & (df["구장"].astype(str).str.strip() == str(stadium).strip())
+    )
+    _actual_hits = pd.to_numeric(df.loc[_mask_single, "관중수"], errors="coerce").dropna()
+    _single_actual = float(_actual_hits.iloc[-1]) if len(_actual_hits) else np.nan
+    _single_row: dict[str, object] = {
+        "경기날짜": pd.Timestamp(game_date).strftime("%Y-%m-%d"),
+        "홈팀": home_team,
+        "방문팀": away_team,
+        "구장": stadium,
+        "관중수": _single_actual,
+        "예측_관중수": int(predicted_attendance),
+    }
+    for _lbl, _val in ml_predictions.items():
+        _single_row[f"예측_{_lbl}"] = int(_val)
+    if len(ml_predictions) > 1:
+        _single_row["예측_평균"] = int(predicted_attendance)
+    _single_game_result_row = pd.DataFrame([_single_row])
+except Exception:
+    _single_game_result_row = None
+
 # =========================
 # 혼잡도 계산
 # =========================
@@ -1291,25 +1585,6 @@ level = _plan.level
 action_class = _plan.action_class
 action_title = _plan.action_title
 action_msg = _plan.action_msg
-
-# =========================
-# 메인 화면
-# =========================
-st.markdown(
-    '<div class="main-title">📈 KBO 관람 수요 예측 시스템</div>',
-    unsafe_allow_html=True
-)
-
-st.markdown(
-    '<div class="sub-text">'
-    "사이드바에서 <b>ML 알고리즘</b>(RandomForest / LightGBM / XGBoost)을 켜면 "
-    "학습된 파이프라인으로 예측하고, 끄면 <b>과거 CSV 평균 + 날씨 룰</b>만 사용합니다. "
-    "최근 5경기 차트는 옵션에 따라 KBO 기록실에서 갱신할 수 있습니다."
-    "</div>",
-    unsafe_allow_html=True,
-)
-
-st.markdown("---")
 
 st.markdown("## 📅 경기 정보")
 
@@ -1576,7 +1851,7 @@ else:
             st_h = str(r.get("구장", stadium)).strip() or stadium
             actual_i = int(r["관중수"])
             temp, rain, hum, wind = _weather_for_historical_row(df, r)
-            pred_i = _predict_ml_attendance_for_row(
+            by_model = _predict_ml_attendance_by_model_for_row(
                 tr_chart,
                 home=home_h,
                 away=away_h,
@@ -1589,14 +1864,18 @@ else:
                 cap_map=cap_map_chart,
                 ml_choice_map=_ml_choice_map,
             )
-            if pred_i is None:
-                continue
+            pred_i = (
+                int(round(float(np.mean(list(by_model.values())))))
+                if by_model
+                else np.nan
+            )
             compare_rows.append(
                 {
                     "경기": f"{gdt.strftime('%m/%d')}\n{home_h} vs {away_h}",
                     "실제": actual_i,
                     "예측": pred_i,
-                    "오차": abs(actual_i - pred_i),
+                    "예측_모델": by_model,
+                    "오차": abs(actual_i - pred_i) if by_model else np.nan,
                 }
             )
 
@@ -1605,6 +1884,7 @@ else:
         _plot_recent_actual_vs_predicted(
             compare_df,
             future_pred=predicted_attendance,
+            future_preds=ml_predictions if ml_predictions else None,
             stadium_name=stadium,
             game_date=game_date,
             home_team=home_team,
@@ -1659,3 +1939,14 @@ else:
         plt.yticks(color="white")
         st.pyplot(fig)
         plt.close(fig)
+
+if _batch_session_active():
+    st.session_state["batch_feat_imp_renderer"] = render_ml_feature_importance_ui
+    render_csv_batch_results_main(
+        chosen=_ml_chosen_labels,
+        cap_by_stadium=st.session_state.cap_by_stadium,
+        ml_train_ok=_ml_train_ok,
+        attendance_df=df,
+        embedded=True,
+        try_kbo_scrape=not _is_streamlit_cloud(),
+    )
