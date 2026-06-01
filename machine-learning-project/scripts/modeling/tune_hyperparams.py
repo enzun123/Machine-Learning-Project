@@ -59,7 +59,7 @@ except ImportError:
     HAS_XGB = False
 
 N_SPLITS = 5
-TEST_SIZE = 0.2
+TEST_SIZE = 0.25
 
 
 def _project_root() -> Path:
