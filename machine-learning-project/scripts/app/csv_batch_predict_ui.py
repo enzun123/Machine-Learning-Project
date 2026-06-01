@@ -991,9 +991,6 @@ def render_csv_batch_results_main(
     if chosen and _feat_imp_fn is not None:
         _feat_imp_fn(
             chosen,
-            context_note=(
-                f"이번 CSV **{n_games:,}경기** 예측의 평균 **{avg_att:,}명**은"
-            ),
             selectbox_key="batch_ml_feat_imp_model",
         )
 
