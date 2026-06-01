@@ -89,7 +89,7 @@ FEATURE_COLUMNS = NUMERIC_FEATURES + CATEGORICAL_FEATURES
 TIME_KEYS = ["연도", "월", "주차_ISO"]
 
 RANDOM_STATE = 42
-TEST_SIZE = 0.2
+TEST_SIZE = 0.25
 
 
 def _project_root() -> Path:
