@@ -20,6 +20,17 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+from app.theme import (
+    actual_bar_color,
+    add_chart_legend,
+    apply_axes_theme,
+    apply_figure_theme,
+    finalize_figure_for_streamlit,
+    model_bar_color,
+    model_bar_colors,
+    pred_single_bar_color,
+)
+from app.theme_watcher import mount_theme_watcher
 from common.congestion_levels import classify_congestion_pct
 from common.kma_vilage_fcst import redact_api_secrets
 from common.logging_config import setup_logging
@@ -96,6 +107,7 @@ st.set_page_config(
     layout="wide",
 )
 
+mount_theme_watcher()
 _ensure_korean_matplotlib_font()
 
 # =========================
@@ -501,18 +513,6 @@ def _ordered_ml_predictions(preds: dict[str, int]) -> list[tuple[str, int]]:
     return [(label, int(preds[label])) for label in order]
 
 
-_ACTUAL_BAR_COLOR = "#4f8cff"
-_PRED_BAR_COLOR_SINGLE = "#f59e0b"  # 단일 모델 예측 — 실제 막대와 구분
-
-
-def _model_bar_color(label: str) -> str:
-    return {
-        "RandomForest": "#a78bfa",
-        "LightGBM": "#22c55e",
-        "XGBoost": "#f97316",
-    }.get(label, "#f59e0b")
-
-
 def _slot_bar_layout(n_bars: int, *, span: float = 0.9, width_ratio: float = 0.72) -> tuple[list[float], float]:
     """슬롯 중심 기준 막대 중심 오프셋·막대 너비 (겹침 방지용 간격 포함)."""
     if n_bars <= 0:
@@ -583,8 +583,7 @@ def _plot_recent_actual_vs_predicted(
     fig_h = 7.8
 
     fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=120)
-    fig.patch.set_facecolor("#07111f")
-    ax.set_facecolor("#07111f")
+    th = apply_figure_theme(fig, ax)
 
     if game_date is not None and home_team and away_team:
         future_lbl = _selected_match_chart_label(game_date, home_team, away_team)
@@ -598,35 +597,35 @@ def _plot_recent_actual_vs_predicted(
 
     def _hist_slot_bars(i: int) -> list[tuple[str, int, str]]:
         bars: list[tuple[str, int, str]] = [
-            ("실제(기록실)", int(actuals[i]), _ACTUAL_BAR_COLOR),
+            ("실제(기록실)", int(actuals[i]), actual_bar_color()),
         ]
         items = _ordered_ml_predictions(slot_models[i])
         if items:
             if len(items) == 1:
                 label, val = items[0]
-                bars.append((label, val, _PRED_BAR_COLOR_SINGLE))
+                bars.append((label, val, pred_single_bar_color()))
             else:
                 for label, val in items:
-                    bars.append((label, val, _model_bar_color(label)))
+                    bars.append((label, val, model_bar_color(label)))
         elif i < len(preds) and not np.isnan(preds[i]):
-            bars.append(("예측(ML 평균)", int(preds[i]), _PRED_BAR_COLOR_SINGLE))
+            bars.append(("예측(ML 평균)", int(preds[i]), pred_single_bar_color()))
         return bars
 
     def _future_slot_bars() -> list[tuple[str, int, str]]:
         bars: list[tuple[str, int, str]] = []
         if has_selected_actual:
-            bars.append(("실제(기록실)", int(selected_actual), _ACTUAL_BAR_COLOR))
+            bars.append(("실제(기록실)", int(selected_actual), actual_bar_color()))
         if not future_items:
             if not bars:
-                return [("이번 경기 예측", int(future_pred), "#18e6ff")]
-            bars.append(("예측(ML 평균)", int(future_pred), _PRED_BAR_COLOR_SINGLE))
+                return [("이번 경기 예측", int(future_pred), th.accent_cyan)]
+            bars.append(("예측(ML 평균)", int(future_pred), pred_single_bar_color()))
             return bars
         if len(future_items) == 1:
             label, val = future_items[0]
-            bars.append((label, val, _PRED_BAR_COLOR_SINGLE))
+            bars.append((label, val, pred_single_bar_color()))
         else:
             for label, val in future_items:
-                bars.append((label, val, _model_bar_color(label)))
+                bars.append((label, val, model_bar_color(label)))
         return bars
 
     legend_seen: set[str] = set()
@@ -657,7 +656,7 @@ def _plot_recent_actual_vs_predicted(
                 val + dy,
                 f"{int(val):,}",
                 ha="center",
-                color="white",
+                color=th.fg,
                 fontsize=val_fs,
             )
 
@@ -667,12 +666,12 @@ def _plot_recent_actual_vs_predicted(
             val + dy,
             f"{int(val):,}",
             ha="center",
-            color="white",
+            color=th.fg,
             fontsize=val_fs,
         )
 
     ax.set_xticks(x)
-    ax.set_xticklabels(labels, color="white", fontsize=10)
+    ax.set_xticklabels(labels, color=th.tick, fontsize=10)
     ax.set_ylabel("관중 수", fontsize=13)
     title_fs = 14
     if game_date is not None and home_team and away_team:
@@ -688,23 +687,18 @@ def _plot_recent_actual_vs_predicted(
             fontsize=title_fs,
             pad=14,
         )
-    ax.tick_params(colors="white", labelsize=11)
-    ax.yaxis.label.set_color("white")
-    ax.title.set_color("white")
-    ax.legend(
+    apply_axes_theme(ax, th)
+    add_chart_legend(
+        ax,
+        th,
         loc="upper center",
         bbox_to_anchor=(0.5, -0.26),
         ncol=min(5, 2 + len(future_items)),
         fontsize=11,
-        frameon=True,
-        facecolor="#0d1a2b",
-        edgecolor="#9fb3c8",
-        labelcolor="white",
     )
-    for spine in ax.spines.values():
-        spine.set_color("#9fb3c8")
-    plt.yticks(color="white")
+    plt.yticks(color=th.tick)
     fig.subplots_adjust(bottom=0.30, top=0.90, left=0.08, right=0.98)
+    finalize_figure_for_streamlit(fig, th)
     st.pyplot(fig, use_container_width=True)
     plt.close(fig)
 
@@ -738,13 +732,6 @@ def _cached_tree_feature_importance_series(model_path_str: str, mtime_key: int) 
     return _aggregate_tree_importance_from_pipe(pipe)
 
 
-_IMP_MODEL_BAR_COLORS: dict[str, str] = {
-    "RandomForest": "#4f8cff",
-    "LightGBM": "#22c55e",
-    "XGBoost": "#f97316",
-}
-
-
 def _importance_pct_grouped(imp: pd.Series) -> pd.Series:
     g = _group_rf_importance_for_display(imp)
     tot = float(g.sum()) or 1.0
@@ -776,8 +763,7 @@ def _plot_grouped_feature_importance(
     bar_h = group_h / max(n_models, 1)
 
     fig, ax = plt.subplots(figsize=(10, max(4.0, 0.38 * n_feat)))
-    fig.patch.set_facecolor("#07111f")
-    ax.set_facecolor("#07111f")
+    th = apply_figure_theme(fig, ax)
 
     for i, name in enumerate(model_names):
         vals = [float(imps_pct[name].get(k, 0.0)) for k in keys]
@@ -787,30 +773,21 @@ def _plot_grouped_feature_importance(
             vals,
             bar_h * 0.92,
             label=name,
-            color=_IMP_MODEL_BAR_COLORS.get(name, "#9fb3c8"),
+            color=model_bar_color(name),
         )
 
     ax.set_yticks(y)
-    ax.set_yticklabels(labels, color="#e8eef5", fontsize=10)
+    ax.set_yticklabels(labels, color=th.tick, fontsize=10)
     ax.invert_yaxis()
-    ax.set_xlabel("상대 기여 (모델 내 %)", color="#9fb3c8", fontsize=11)
-    ax.tick_params(axis="x", colors="#9fb3c8")
+    ax.set_xlabel("상대 기여 (모델 내 %)", fontsize=11)
     ax.set_title(
         "알고리즘별 피처 중요도 비교 (날씨 세부는 2그룹 합산)",
-        color="white",
         fontsize=13,
     )
-    ax.legend(
-        loc="lower right",
-        fontsize=9,
-        frameon=True,
-        facecolor="#0d1a2b",
-        edgecolor="#9fb3c8",
-        labelcolor="white",
-    )
-    for spine in ax.spines.values():
-        spine.set_color("#24384f")
+    apply_axes_theme(ax, th)
+    add_chart_legend(ax, th, loc="lower right", fontsize=9)
     fig.tight_layout()
+    finalize_figure_for_streamlit(fig, th)
     return fig
 
 
@@ -999,23 +976,20 @@ def _plot_rf_importance_barh(
     pct = vals / tot * 100.0
 
     fig, ax = plt.subplots(figsize=(10, max(4.0, 0.35 * len(tail))))
-    fig.patch.set_facecolor("#07111f")
-    ax.set_facecolor("#07111f")
+    th = apply_figure_theme(fig, ax)
     y = np.arange(len(tail))
-    ax.barh(y, pct, color="#4f8cff", height=0.65)
+    ax.barh(y, pct, color=model_bar_colors().random_forest, height=0.65)
     ax.set_yticks(y)
-    ax.set_yticklabels(labels, color="#e8eef5", fontsize=10)
+    ax.set_yticklabels(labels, color=th.tick, fontsize=10)
     ax.invert_yaxis()
-    ax.set_xlabel("상대 기여 (전체 중 %)", color="#9fb3c8", fontsize=11)
-    ax.tick_params(axis="x", colors="#9fb3c8")
+    ax.set_xlabel("상대 기여 (전체 중 %)", fontsize=11)
     ax.set_title(
         f"{model_label} 피처 중요도 (날씨 세부는 2그룹으로 합산)",
-        color="white",
         fontsize=13,
     )
-    for spine in ax.spines.values():
-        spine.set_color("#24384f")
+    apply_axes_theme(ax, th)
     fig.tight_layout()
+    finalize_figure_for_streamlit(fig, th)
     return fig
 
 
@@ -1392,14 +1366,24 @@ else:
 # =========================
 # 메인 — 공통 제목·예측 방식
 # =========================
-st.markdown(
-    '<div class="main-title">📈 KBO 관람 수요 예측 시스템</div>',
-    unsafe_allow_html=True,
-)
-st.markdown(
-    '<div class="sub-text">단일 경기 예측 또는 CSV 업로드 예측을 선택해 결과를 확인하세요.</div>',
-    unsafe_allow_html=True,
-)
+_hdr_title, _hdr_btn = st.columns([7, 1], vertical_alignment="center")
+with _hdr_title:
+    st.markdown(
+        '<div class="main-title">📈 KBO 관람 수요 예측 시스템</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="sub-text">단일 경기 예측 또는 CSV 업로드 예측을 선택해 결과를 확인하세요.</div>',
+        unsafe_allow_html=True,
+    )
+with _hdr_btn:
+    if st.button(
+        "🔄 새로고침",
+        use_container_width=True,
+        help="화면·차트·테마를 다시 불러옵니다.",
+        key="btn_app_refresh",
+    ):
+        st.rerun()
 st.markdown("---")
 
 if input_mode == _MODE_CSV:
@@ -2016,13 +2000,14 @@ else:
             _selected_match_chart_label(game_date, home_team, away_team),
         ]
         fig, ax = plt.subplots(figsize=(11, 4))
-        fig.patch.set_facecolor("#07111f")
-        ax.set_facecolor("#07111f")
+        th = apply_figure_theme(fig, ax)
         bars = ax.bar(chart_df["경기정보"], chart_df["관중수"])
         _ymax = float(pd.to_numeric(chart_df["관중수"], errors="coerce").fillna(0).max()) or 1.0
         _label_dy = max(_ymax * 0.015, 200.0)
         for i, bar in enumerate(bars):
-            bar.set_color("#18e6ff" if i == len(bars) - 1 else "#4f8cff")
+            bar.set_color(
+                th.accent_cyan if i == len(bars) - 1 else actual_bar_color()
+            )
         for bar in bars:
             h = bar.get_height()
             ax.text(
@@ -2030,18 +2015,19 @@ else:
                 h + _label_dy,
                 f"{int(h):,}",
                 ha="center",
-                color="white",
+                color=th.fg,
                 fontsize=10,
             )
         ax.set_title(f"{stadium} 최근 경기 관중 + 이번 경기 예측")
         ax.set_ylabel("관중 수")
-        ax.tick_params(colors="white")
-        ax.yaxis.label.set_color("white")
-        ax.title.set_color("white")
+        ax.tick_params(colors=th.tick)
+        ax.yaxis.label.set_color(th.fg)
+        ax.title.set_color(th.fg)
         for spine in ax.spines.values():
-            spine.set_color("#9fb3c8")
-        plt.xticks(rotation=0, color="white")
-        plt.yticks(color="white")
+            spine.set_color(th.spine)
+        plt.xticks(rotation=0, color=th.tick)
+        plt.yticks(color=th.tick)
+        finalize_figure_for_streamlit(fig, th)
         st.pyplot(fig)
         plt.close(fig)
 

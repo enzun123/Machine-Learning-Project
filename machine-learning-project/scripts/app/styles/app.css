@@ -1,120 +1,172 @@
+/* Streamlit 테마 변수 — 설정·OS 변경 시 CSS만으로 즉시 반영 */
+
 .stApp {
-    background-color: #07111f;
-    color: white;
+    background-color: var(--background-color);
+    color: var(--text-color);
 }
 
 [data-testid="stSidebar"] {
-    background-color: #0b1726;
-    border-right: 1px solid #24384f;
+    background-color: var(--secondary-background-color);
+    border-right: 1px solid color-mix(in srgb, var(--text-color) 18%, transparent);
+}
+
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] li,
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] .stSlider label,
+[data-testid="stSidebar"] .stSlider [data-testid="stThumbValue"],
+[data-testid="stSidebar"] .stRadio label,
+[data-testid="stSidebar"] .stCheckbox label {
+    color: var(--text-color) !important;
+}
+
+[data-testid="stSidebar"] h1,
+[data-testid="stSidebar"] h2,
+[data-testid="stSidebar"] h3 {
+    color: var(--text-color) !important;
+}
+
+/* 사이드바 입력·선택 박스 (배경=사이드바색과 같아져 안 보이던 문제) */
+[data-testid="stSidebar"] [data-baseweb="select"] > div,
+[data-testid="stSidebar"] [data-baseweb="input"],
+[data-testid="stSidebar"] [data-testid="stDateInput"] [data-baseweb="input"],
+[data-testid="stSidebar"] .stNumberInput input,
+[data-testid="stSidebar"] .stTextInput input {
+    background-color: light-dark(#ffffff, #0e1117) !important;
+    border: 1px solid light-dark(#d1d5db, #4a4f5c) !important;
+    border-radius: 0.5rem !important;
+    color: var(--text-color, light-dark(#31333f, #fafafa)) !important;
+}
+
+[data-testid="stSidebar"] [data-baseweb="select"] > div:hover,
+[data-testid="stSidebar"] [data-baseweb="input"]:hover {
+    border-color: light-dark(#94a3b8, #6b7280) !important;
 }
 
 .main-title {
     font-size: 32px;
     font-weight: 900;
-    color: white;
+    color: var(--text-color);
     margin-bottom: 8px;
 }
 
 .sub-text {
-    color: #9fb3c8;
+    color: color-mix(in srgb, var(--text-color) 72%, transparent);
     font-size: 15px;
 }
 
 .match-text {
-    color: white;
+    color: var(--text-color);
     font-size: 18px;
     margin-top: 18px;
     margin-bottom: 18px;
 }
 
-.predict-box {
-    border: 1px dashed #18e6ff;
+/* 커스텀 HTML 박스 — Streamlit 변수 + light-dark 이중 지정(배경=페이지색과 겹침 방지) */
+[data-testid="stMarkdownContainer"] .predict-box,
+div.predict-box {
+    border: 2px dashed light-dark(#0891b2, #18e6ff);
     border-radius: 14px;
     padding: 45px;
     text-align: center;
     margin-top: 20px;
     margin-bottom: 25px;
-    background-color: #081525;
+    background-color: light-dark(#f0f4f8, #1c2333);
+    box-shadow: 0 0 0 1px light-dark(rgba(8, 145, 178, 0.15), rgba(24, 230, 255, 0.12));
 }
 
-.predict-label {
-    color: white;
+[data-testid="stMarkdownContainer"] .predict-label,
+div.predict-label {
+    color: light-dark(#334155, #e2e8f0);
+    color: var(--text-color, light-dark(#334155, #e2e8f0));
     font-size: 18px;
     margin-bottom: 10px;
 }
 
-.predict-number {
-    color: #18e6ff;
+[data-testid="stMarkdownContainer"] .predict-number,
+div.predict-number {
+    color: light-dark(#0891b2, #18e6ff);
+    color: var(--primary-color, light-dark(#0891b2, #18e6ff));
     font-size: 62px;
     font-weight: 900;
 }
 
-.card {
-    background-color: #101d2d;
-    border: 1px solid #263f5c;
+[data-testid="stMarkdownContainer"] .card,
+div.card {
+    background-color: light-dark(#ffffff, #262730);
+    border: 1px solid light-dark(#cbd5e1, #3d4149);
     border-radius: 15px;
     padding: 25px;
     text-align: center;
 }
 
-.card-title {
-    color: #b8c7d9;
+[data-testid="stMarkdownContainer"] .card-title,
+div.card-title {
+    color: light-dark(#475569, #b8c7d9);
     font-size: 17px;
     margin-bottom: 10px;
 }
 
-.card-value {
-    color: white;
+[data-testid="stMarkdownContainer"] .card-value,
+div.card-value {
+    color: light-dark(#0f172a, #ffffff);
+    color: var(--text-color, light-dark(#0f172a, #ffffff));
     font-size: 34px;
     font-weight: 800;
 }
 
-.card-high {
-    color: #ff4b5c;
+[data-testid="stMarkdownContainer"] .card-high,
+div.card-high {
+    color: light-dark(#dc2626, #ff4b5c);
     font-size: 38px;
     font-weight: 900;
 }
 
-.action-low {
-    background-color: #0f3425;
-    border: 1px solid #2ecc71;
+[data-testid="stMarkdownContainer"] .action-low,
+div.action-low {
+    background-color: light-dark(#ecfdf5, #0f3425);
+    border: 1px solid light-dark(#16a34a, #2ecc71);
     border-radius: 15px;
     padding: 25px;
-    color: white;
+    color: light-dark(#14532d, #ffffff);
 }
 
-.action-mid {
-    background-color: #3c3414;
-    border: 1px solid #f1c40f;
+[data-testid="stMarkdownContainer"] .action-mid,
+div.action-mid {
+    background-color: light-dark(#fffbeb, #3c3414);
+    border: 1px solid light-dark(#d97706, #f1c40f);
     border-radius: 15px;
     padding: 25px;
-    color: white;
+    color: light-dark(#78350f, #ffffff);
 }
 
-.action-high {
-    background-color: #3b1116;
-    border: 1px solid #ff4b5c;
+[data-testid="stMarkdownContainer"] .action-high,
+div.action-high {
+    background-color: light-dark(#fef2f2, #3b1116);
+    border: 1px solid light-dark(#dc2626, #ff4b5c);
     border-radius: 15px;
     padding: 25px;
-    color: white;
+    color: light-dark(#7f1d1d, #ffffff);
 }
 
-.disclaimer-under-predict {
-    background-color: #101d2d;
-    border: 1px solid #2a4a6f;
+[data-testid="stMarkdownContainer"] .disclaimer-under-predict,
+div.disclaimer-under-predict {
+    background-color: light-dark(#f1f5f9, #101d2d);
+    border: 1px solid light-dark(#cbd5e1, #2a4a6f);
     border-radius: 12px;
     padding: 16px 18px;
     margin: 16px 0 20px 0;
     font-size: 13px;
     line-height: 1.65;
-    color: #c5d8ec;
+    color: light-dark(#334155, #c5d8ec);
 }
+
 .disclaimer-under-predict b {
-    color: #e8f0f8;
+    color: var(--text-color);
 }
 .disclaimer-under-predict code {
     font-size: 12px;
-    color: #b8d4f0;
+    color: var(--primary-color);
 }
 
 .rain-risk-box {
@@ -124,64 +176,66 @@
     margin-bottom: 8px;
     font-size: 14px;
     line-height: 1.55;
-    color: #e8eef5;
+    color: var(--text-color);
 }
 
 .rain-risk-title {
     font-weight: 700;
     margin-bottom: 6px;
-    color: #e8eef5;
+    color: var(--text-color);
 }
 
 .rain-risk-low {
     border: 1px solid #2ecc71;
-    background: rgba(46, 204, 113, 0.09);
+    background: light-dark(rgba(22, 163, 74, 0.12), rgba(46, 204, 113, 0.09));
 }
 
 .rain-risk-mid {
     border: 1px solid #f39c12;
-    background: rgba(243, 156, 18, 0.12);
+    background: light-dark(rgba(217, 119, 6, 0.12), rgba(243, 156, 18, 0.12));
 }
 
 .rain-risk-high {
     border: 1px solid #e74c3c;
-    background: rgba(231, 76, 60, 0.11);
+    background: light-dark(rgba(220, 38, 38, 0.1), rgba(231, 76, 60, 0.11));
 }
 
 .rain-fcst-warn {
     border: 1px solid #c9a227;
-    background: rgba(201, 162, 39, 0.14);
+    background: light-dark(rgba(202, 138, 4, 0.14), rgba(201, 162, 39, 0.14));
     border-radius: 10px;
     padding: 14px 16px;
     margin-top: 14px;
     margin-bottom: 8px;
     font-size: 14px;
     line-height: 1.55;
-    color: #e8eef5;
+    color: var(--text-color);
 }
 .rain-fcst-warn-title {
     font-weight: 700;
     margin-bottom: 8px;
-    color: #f5e6a8;
+    color: var(--text-color);
 }
 .rain-fcst-warn-tech {
     font-size: 12px;
-    color: #9fb3c8;
+    color: light-dark(#57534e, #9fb3c8);
     margin: 0;
 }
 
-.rain-info-compact {
-    background-color: #101d2d;
-    border: 1px solid #2a4a6f;
+[data-testid="stMarkdownContainer"] .rain-info-compact,
+div.rain-info-compact {
+    background-color: light-dark(#f1f5f9, #101d2d);
+    border: 1px solid light-dark(#cbd5e1, #2a4a6f);
     border-radius: 10px;
     padding: 12px 14px;
     margin: 14px 0 10px 0;
     font-size: 13px;
     line-height: 1.5;
-    color: #c5d8ec;
+    color: light-dark(#334155, #c5d8ec);
 }
+
 .rain-info-compact b {
-    color: #e8f0f8;
+    color: var(--text-color);
 }
 .rain-info-compact ul {
     margin: 8px 0 0 0;
@@ -189,4 +243,66 @@
 }
 .rain-info-compact li {
     margin-bottom: 4px;
+}
+
+[data-testid="stAppViewContainer"] [data-testid="stMarkdownContainer"] p,
+[data-testid="stAppViewContainer"] [data-testid="stMarkdownContainer"] li {
+    color: var(--text-color);
+}
+
+/* 피처 중요도 등 expander — 차트·표가 한 패널처럼 보이도록 */
+[data-testid="stExpander"] details {
+    background-color: var(--secondary-background-color, light-dark(#f0f2f6, #262730));
+    border: 1px solid light-dark(#e2e8f0, #3d4149);
+    border-radius: 0.5rem;
+}
+
+[data-testid="stExpander"] summary {
+    background-color: var(--secondary-background-color);
+    color: var(--text-color);
+}
+
+[data-testid="stExpander"] [data-testid="stMarkdownContainer"] p {
+    color: var(--text-color);
+}
+
+[data-testid="stExpander"] [data-testid="stPyplot"],
+[data-testid="stExpander"] [data-testid="stPyplot"] > div,
+[data-testid="stExpander"] [data-testid="stPyplot"] img {
+    background-color: var(--secondary-background-color) !important;
+    border: none !important;
+}
+
+[data-testid="stExpander"] [data-testid="stDataFrame"],
+[data-testid="stExpander"] [data-testid="stDataFrame"] > div {
+    background-color: var(--secondary-background-color) !important;
+}
+
+[data-testid="stExpander"] [data-testid="stDataFrame"] [role="grid"],
+[data-testid="stExpander"] [data-testid="stDataFrame"] [data-testid="stTable"] {
+    background-color: var(--secondary-background-color) !important;
+    color: var(--text-color) !important;
+}
+
+[data-testid="stPyplot"] {
+    background-color: var(--secondary-background-color);
+    border-radius: 8px;
+    padding: 0;
+    border: none;
+    margin: 0;
+}
+
+[data-testid="stPyplot"] > div,
+[data-testid="stPyplot"] img {
+    background-color: var(--secondary-background-color) !important;
+}
+
+[data-testid="stDataFrame"] {
+    background-color: var(--secondary-background-color);
+    border-radius: 8px;
+}
+
+[data-testid="stDataFrame"] div {
+    background-color: var(--secondary-background-color);
+    color: var(--text-color);
 }

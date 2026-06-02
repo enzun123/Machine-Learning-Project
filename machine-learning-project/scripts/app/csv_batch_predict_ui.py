@@ -13,6 +13,16 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+from app.theme import (
+    actual_bar_color,
+    add_chart_legend,
+    apply_axes_theme,
+    apply_figure_theme,
+    chart_theme,
+    finalize_figure_for_streamlit,
+    model_bar_color,
+    pred_single_bar_color,
+)
 from common.attendance_parse import attendance_sources_fingerprint, parse_attendance_column
 from common.congestion_levels import classify_congestion_pct
 from common.stadium_capacity import venue_clip_capacity
@@ -43,18 +53,6 @@ _ALGO_PRED_DISPLAY: dict[str, str] = {
     "예측_LightGBM": "LGBM 예측(명)",
     "예측_XGBoost": "XGB 예측(명)",
 }
-
-_ACTUAL_BAR_COLOR = "#4f8cff"
-_PRED_BAR_COLOR_SINGLE = "#f59e0b"
-
-
-def _model_bar_color(label: str) -> str:
-    return {
-        "RandomForest": "#a78bfa",
-        "LightGBM": "#22c55e",
-        "XGBoost": "#f97316",
-    }.get(label, "#f59e0b")
-
 
 def _slot_bar_layout(n_bars: int, *, span: float = 0.9, width_ratio: float = 0.72) -> tuple[list[float], float]:
     if n_bars <= 0:
@@ -510,21 +508,21 @@ def _batch_slot_bars(row: pd.Series) -> list[tuple[str, int, str]]:
     """한 경기 슬롯 막대: 실제(있으면) + 알고리즘별 예측."""
     bars: list[tuple[str, int, str]] = []
     if row["has_actual"] and pd.notna(row["실제"]):
-        bars.append(("실제(기록)", int(row["실제"]), _ACTUAL_BAR_COLOR))
+        bars.append(("실제(기록)", int(row["실제"]), actual_bar_color()))
     items = _ordered_batch_algo_preds(row.get("예측_모델") or {})
     if items:
         if len(items) == 1:
             label, val = items[0]
-            bars.append((label, val, _PRED_BAR_COLOR_SINGLE))
+            bars.append((label, val, pred_single_bar_color()))
         else:
             for label, val in items:
-                bars.append((label, val, _model_bar_color(label)))
+                bars.append((label, val, model_bar_color(label)))
     elif pd.notna(row.get("예측")):
         pred = int(row["예측"])
         if row["has_actual"]:
-            bars.append(("예측(ML 평균)", pred, _PRED_BAR_COLOR_SINGLE))
+            bars.append(("예측(ML 평균)", pred, pred_single_bar_color()))
         else:
-            bars.append(("예정 경기 예측", pred, "#18e6ff"))
+            bars.append(("예정 경기 예측", pred, chart_theme().accent_cyan))
     return bars
 
 
@@ -538,8 +536,7 @@ def _plot_batch_actual_vs_predicted(result: pd.DataFrame) -> None:
     slot_w = 2.35 if max_bars >= 4 else 2.0 if max_bars >= 3 else 1.7
     fig_w = min(18.0, max(10.0, n * slot_w + 2))
     fig, ax = plt.subplots(figsize=(fig_w, 5.2), dpi=120)
-    fig.patch.set_facecolor("#07111f")
-    ax.set_facecolor("#07111f")
+    th = apply_figure_theme(fig, ax)
 
     labels = compare["경기"].tolist()
     x = np.arange(n)
@@ -563,32 +560,27 @@ def _plot_batch_actual_vs_predicted(result: pd.DataFrame) -> None:
                 val + dy,
                 f"{int(val):,}",
                 ha="center",
-                color="#e8eef5",
+                color=th.fg,
                 fontsize=val_fs,
             )
 
     ax.set_xticks(x)
-    ax.set_xticklabels(labels, color="white", fontsize=8)
+    ax.set_xticklabels(labels, color=th.tick, fontsize=8)
     ax.set_ylabel("관중 수")
-    ax.set_title("경기별 실제 vs 예측 관중", color="white")
-    ax.tick_params(colors="white")
-    ax.yaxis.label.set_color("white")
-    ax.title.set_color("white")
+    ax.set_title("경기별 실제 vs 예측 관중", fontsize=13)
+    apply_axes_theme(ax, th)
     n_legend = len(legend_seen)
-    ax.legend(
+    add_chart_legend(
+        ax,
+        th,
         loc="upper center",
         bbox_to_anchor=(0.5, -0.22),
         ncol=min(5, max(2, n_legend)),
         fontsize=9,
-        frameon=True,
-        facecolor="#0d1a2b",
-        edgecolor="#9fb3c8",
-        labelcolor="white",
     )
-    for spine in ax.spines.values():
-        spine.set_color("#9fb3c8")
-    plt.yticks(color="white")
+    plt.yticks(color=th.tick)
     fig.subplots_adjust(bottom=0.30 if n_legend >= 4 else 0.26)
+    finalize_figure_for_streamlit(fig, th)
     st.pyplot(fig, use_container_width=True)
     plt.close(fig)
 
