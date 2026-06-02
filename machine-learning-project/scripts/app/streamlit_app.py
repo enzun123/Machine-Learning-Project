@@ -1366,14 +1366,24 @@ else:
 # =========================
 # 메인 — 공통 제목·예측 방식
 # =========================
-st.markdown(
-    '<div class="main-title">📈 KBO 관람 수요 예측 시스템</div>',
-    unsafe_allow_html=True,
-)
-st.markdown(
-    '<div class="sub-text">단일 경기 예측 또는 CSV 업로드 예측을 선택해 결과를 확인하세요.</div>',
-    unsafe_allow_html=True,
-)
+_hdr_title, _hdr_btn = st.columns([7, 1], vertical_alignment="center")
+with _hdr_title:
+    st.markdown(
+        '<div class="main-title">📈 KBO 관람 수요 예측 시스템</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="sub-text">단일 경기 예측 또는 CSV 업로드 예측을 선택해 결과를 확인하세요.</div>',
+        unsafe_allow_html=True,
+    )
+with _hdr_btn:
+    if st.button(
+        "🔄 새로고침",
+        use_container_width=True,
+        help="화면·차트·테마를 다시 불러옵니다.",
+        key="btn_app_refresh",
+    ):
+        st.rerun()
 st.markdown("---")
 
 if input_mode == _MODE_CSV:
