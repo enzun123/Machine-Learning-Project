@@ -5,9 +5,25 @@
     color: var(--text-color);
 }
 
+/* 사이드바 — 투명 배경 시 본문이 비쳐 보이는 문제 방지 (모바일 오버레이 포함) */
+[data-testid="stSidebar"],
+[data-testid="stSidebar"] > div,
+[data-testid="stSidebarContent"],
+[data-testid="stSidebarUserContent"] {
+    background-color: light-dark(#f0f2f6, #262730) !important;
+    background-color: var(--secondary-background-color, light-dark(#f0f2f6, #262730)) !important;
+    opacity: 1 !important;
+}
+
 [data-testid="stSidebar"] {
-    background-color: var(--secondary-background-color);
-    border-right: 1px solid color-mix(in srgb, var(--text-color) 18%, transparent);
+    border-right: 1px solid light-dark(#e2e8f0, #3d4149);
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+}
+
+[data-testid="stSidebar"] [data-testid="stVerticalBlock"],
+[data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"] {
+    background-color: transparent;
 }
 
 [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
@@ -305,4 +321,61 @@ div.rain-info-compact {
 [data-testid="stDataFrame"] div {
     background-color: var(--secondary-background-color);
     color: var(--text-color);
+}
+
+@media (max-width: 768px) {
+    [data-testid="stSidebar"],
+    [data-testid="stSidebar"] > div,
+    [data-testid="stSidebarContent"],
+    [data-testid="stSidebarUserContent"] {
+        background-color: light-dark(#f0f2f6, #262730) !important;
+        box-shadow: 4px 0 24px rgba(0, 0, 0, 0.35);
+    }
+
+    section.main
+        [data-testid="stVerticalBlock"]:has(.main-title)
+        > [data-testid="stHorizontalBlock"] {
+        flex-direction: column !important;
+        align-items: stretch !important;
+        gap: 0.5rem;
+    }
+
+    section.main
+        [data-testid="stVerticalBlock"]:has(.main-title)
+        [data-testid="column"] {
+        width: 100% !important;
+        flex: 1 1 auto !important;
+        min-width: 0 !important;
+    }
+
+    .main-title {
+        font-size: 1.35rem;
+        line-height: 1.35;
+    }
+
+    .sub-text {
+        font-size: 0.8125rem;
+        line-height: 1.45;
+    }
+
+    [data-testid="stSlider"] {
+        margin-bottom: 1.25rem !important;
+    }
+
+    [data-testid="stExpander"],
+    .kbo-feat-imp-section {
+        margin-top: 1rem !important;
+        margin-bottom: 1rem !important;
+        clear: both;
+    }
+
+    [data-testid="stPyplot"] {
+        overflow-x: auto;
+        max-width: 100%;
+    }
+
+    [data-testid="stPyplot"] img {
+        max-width: 100%;
+        height: auto !important;
+    }
 }
