@@ -252,7 +252,7 @@ def _attendance_lookup_columns(df: pd.DataFrame) -> pd.DataFrame | None:
         cols.append("구장")
     out = df[cols].copy()
     out[TARGET] = _parse_attendance_series(out[TARGET])
-    out["경기날짜"] = pd.to_datetime(out["경기날짜"], errors="coerce")
+    out["경기날짜"] = pd.to_datetime(out["경기날짜"], errors="coerce", format="mixed")
     return out.dropna(subset=["경기날짜", TARGET])
 
 

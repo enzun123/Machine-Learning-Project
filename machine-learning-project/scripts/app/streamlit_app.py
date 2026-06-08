@@ -1914,7 +1914,7 @@ else:
     hist = recent_games[["경기날짜", "홈팀", "방문팀", "관중수"]].copy()
     if "구장" in recent_games.columns:
         hist["구장"] = recent_games["구장"]
-    hist["경기날짜"] = pd.to_datetime(hist["경기날짜"], errors="coerce")
+    hist["경기날짜"] = pd.to_datetime(hist["경기날짜"], errors="coerce", format="mixed")
     hist["관중수"] = pd.to_numeric(hist["관중수"], errors="coerce")
 
     compare_rows: list[dict] = []
@@ -1992,13 +1992,19 @@ else:
             + " vs "
             + chart_df["방문팀"]
         )
-        chart_df.loc[len(chart_df)] = [
-            pd.NaT,
-            home_team,
-            away_team,
-            predicted_attendance,
-            _selected_match_chart_label(game_date, home_team, away_team),
-        ]
+        _pred_row: dict[str, object] = {
+            "경기날짜": pd.NaT,
+            "홈팀": home_team,
+            "방문팀": away_team,
+            "관중수": predicted_attendance,
+            "경기정보": _selected_match_chart_label(game_date, home_team, away_team),
+        }
+        if "구장" in chart_df.columns:
+            _pred_row["구장"] = stadium
+        chart_df = pd.concat(
+            [chart_df, pd.DataFrame([_pred_row])],
+            ignore_index=True,
+        )
         fig, ax = plt.subplots(figsize=(11, 4))
         th = apply_figure_theme(fig, ax)
         bars = ax.bar(chart_df["경기정보"], chart_df["관중수"])
