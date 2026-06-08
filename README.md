@@ -1,421 +1,117 @@
-# ⚾ KBO 관중 예측 ML 프로젝트
+# ⚾ KBO 관람 수요 예측 ML
 
-> KBO 경기별 관중 수 예측 — 데이터 파이프라인 + Streamlit 웹앱
+![Python](https://img.shields.io/badge/Python-3.10--3.12-3776AB?logo=python&logoColor=white)
+![Streamlit](https://img.shields.io/badge/Streamlit-1.28+-FF4B4B?logo=streamlit&logoColor=white)
+![scikit-learn](https://img.shields.io/badge/scikit--learn-1.8.0-F7931E?logo=scikit-learn&logoColor=white)
+![CI](https://img.shields.io/badge/CI-pytest-blue?logo=githubactions&logoColor=white)
 
-**🌐 데모:** [kbo-ml-prediction.streamlit.app](https://kbo-ml-prediction.streamlit.app)
+**LightGBM 기반 KBO 관중 예측 — MAE 1,856명, R² 0.78**
+
+**🌐 라이브 데모:** [kbo-ml-prediction.streamlit.app](https://kbo-ml-prediction.streamlit.app)
+
+**최종 업데이트:** 2026년 6월 · 학습 데이터 기준 **2024–2025 시즌**
 
 ---
 
 ## 목차
 
-- [공통 (먼저 읽기)](#공통-먼저-읽기)
-- [macOS 실행 가이드](#macos-실행-가이드)
-- [Windows 실행 가이드](#windows-실행-가이드)
-- [3개 모델 (RF · LGBM · XGB)](#3개-모델-rf--lgbm--xgb)
-- [Streamlit Cloud](#streamlit-cloud)
-- [자동 테스트 (CI)](#자동-테스트-ci)
-- [모델 성능 · 스크립트 · 팀](#모델-성능--스크립트--팀)
+- [프로젝트 개요](#프로젝트-개요)
+- [설치](#설치)
+- [Quick Start](#quick-start)
+- [환경 설정 (선택)](#환경-설정-선택)
+- [모델 성능](#모델-성능)
+- [데이터](#데이터)
+- [프로젝트 구조](#프로젝트-구조)
+- [모델링](#모델링)
+- [Streamlit 앱](#streamlit-앱)
+- [한계점](#한계점-limitations)
+- [CI](#ci)
+- [팀](#팀)
+- [참고 리포트](#참고-리포트)
 
 ---
 
-## 공통 (먼저 읽기)
+## 프로젝트 개요
 
-### 프로젝트 요약
+KBO 경기별 관중 수를 머신러닝으로 예측하고, Streamlit 웹앱으로 **혼잡도·우천 참고 정보**까지 제공하는 End-to-End ML 프로젝트입니다.
 
-경기 일정·구장·기상·순위로 **관중 수**를 예측합니다. Streamlit에서 예측·혼잡도·동네예보(우천 참고)를 볼 수 있습니다.
+구장 운영·마케팅·입장 planning에서 “이번 경기 관중이 얼마나 올까?”는 핵심 질문입니다.  
+본 프로젝트는 **경기 일정, 구장, 기상, 팀·매치업 이력**을 입력으로 관중 수를 회귀 예측하고, 결과를 **누구나 쓸 수 있는 웹 UI**로 제공합니다.
 
-- **모델:** RandomForest(기본) · LightGBM · XGBoost (UI에서 선택, 다중 선택 시 **평균**)
-- **ML 입력:** 기온·강수·습도·**풍속(m/s)** → 학습과 동일한 `wind_bucket` · **경기 날짜 이전** 데이터만으로 폼 피처 구성
-- **repo에 데이터·joblib가 있으면** 크롤링·학습 없이 **웹앱만** 실행 가능
+**만든 이유 (Motivation)**
 
-### 폴더 구조
-
-```
-Machine-Learning-Project/          ← git clone 루트
-├── requirements.txt               ← Streamlit Cloud (xgboost 포함)
-├── packages.txt
-├── .github/workflows/pytest.yml   ← push/PR 시 자동 pytest
-└── machine-learning-project/      ← ★ 모든 명령은 여기서 실행
-    ├── pyproject.toml             ← pip install -e .
-    ├── data/
-    ├── models/                    ← *.joblib
-    ├── tests/                     ← pytest
-    └── scripts/
-        └── app/streamlit_app.py
-```
-
-| 주의 | 설명 |
-|------|------|
-| `pip install -e .` 위치 | 반드시 **`machine-learning-project/`** 안에서 (루트 X) |
-| `cd` 실수 | clone 직후: `.../Machine-Learning-Project/machine-learning-project` · 이미 루트 안: `cd machine-learning-project` |
-
-### 포함된 파일 (앱만 켤 때)
-
-`machine-learning-project/` 기준:
-
-| 경로 | 설명 |
-|------|------|
-| `data/processed/kbo_train_ready.csv` | 학습 피처 |
-| `models/attendance_rf_pipeline.joblib` | RF |
-| `models/attendance_lgbm_pipeline.joblib` | LGBM |
-| `models/attendance_xgb_pipeline.joblib` | XGB |
-
-### 데이터 파이프라인
-
-```
-kbo_scraping / kbo_standings_scrape → raw, standings
-kbo_size → kbo_stadium_info.csv
-weather_api → interim (*_weather.csv)
-preprocess_attendance_weather → final_dataset.csv
-build_features → kbo_train_ready.csv   (KIA 홈 광주 관중 상한 20,500 반영)
-train_model.py          → RF .joblib 만
-benchmark_models.py     → RF + LGBM + XGB .joblib (3개 한 번에)
-evaluate_model.py       → eval_report.json (RF)
-batch_feature_builder.py → 단일·CSV 추론 피처 (Streamlit과 동일 로직)
-streamlit_app.py        → 웹 UI
-```
-
-> **피처 CSV를 다시 만들 때:** `build_features.py` 실행 후 필요하면 `benchmark_models.py`로 joblib 재학습.
-
-### 공통 요구사항
-
-| 항목 | 내용 |
-|------|------|
-| Python | **3.10 ~ 3.12** (3.14 등 최신 버전은 호환 오류 가능) |
-| Chrome | 크롤링·앱 «최근 5경기» 사용 시 |
-| 기상 API (선택) | `KMA_APIHUB_AUTH_KEY` |
-
-`pip install -e .` 후에는 대부분 **`PYTHONPATH` 불필요** (`common`, `modeling` 패키지 설치됨).
+- KBO 관중은 구장·요일·날씨·팀 인기·매치업에 따라 크게 달라져, 단순 평균으로는 오차가 큼
+- 데이터 수집 → 전처리 → 피처 → 학습 → 배포까지 **End-to-End ML 파이프라인**을 한 repo에서 재현 가능하게 구성
+- 발표·실무에서 바로 쓸 수 있도록 **Streamlit Cloud 배포** 및 CSV 일괄 예측 지원
 
 ---
 
-## macOS 실행 가이드
-
-### 1. 설치 (가상환경 없음 · 권장)
-
-터미널 (bash / zsh):
+## 설치
 
 ```bash
 git clone https://github.com/enzun123/Machine-Learning-Project.git
 cd Machine-Learning-Project/machine-learning-project
 
-pip3 install -U pip
-pip3 install -e .
-```
-
-이미 저장소 루트(`Machine-Learning-Project`)에 있다면:
-
-```bash
-cd machine-learning-project
-pip3 install -e .
-```
-
-### 2. Streamlit 웹앱
-
-```bash
-cd machine-learning-project
-streamlit run scripts/app/streamlit_app.py
-```
-
-- 주소: http://localhost:8501
-- `streamlit` 없음: `python3 -m streamlit run scripts/app/streamlit_app.py`
-
-**동네예보 (선택)**
-
-```bash
-export KMA_APIHUB_AUTH_KEY="발급받은_키"
-```
-
-또는 `machine-learning-project/.streamlit/secrets.toml`:
-
-```toml
-KMA_APIHUB_AUTH_KEY = "발급받은_키"
-```
-
-**최근 5경기 크롤 끄기 (선택)**
-
-```bash
-export STREAMLIT_WEB_RECENT=0
-```
-
-### 3. pytest (선택)
-
-```bash
-cd machine-learning-project
-pip3 install -e ".[dev]"
-pytest
-```
-
-- 스모크(경로·CSV·joblib) + 추론 피처(날짜 필터·`wind_bucket`) 등 **19개** 테스트
-- GitHub Actions: `main` / `develop` push·PR 시 Ubuntu에서 Python 3.11·3.12로 동일 실행
-
-### 4. 3개 모델 학습 (macOS)
-
-```bash
-cd machine-learning-project
-pip3 install -e .
-python3 scripts/modeling/benchmark_models.py
-```
-
-(`pip install -e .`에 **xgboost** 포함. Optuna 튜닝만 `pip install -e ".[benchmark]"`와 동일.)
-
-Streamlit → 사이드바 **ML 알고리즘** → RF · LGBM · XGB **전부 체크**.
-
-### 5. 전체 파이프라인 (macOS)
-
-`machine-learning-project`에서:
-
-```bash
-cd machine-learning-project
-pip3 install -e .
-
-export KMA_APIHUB_AUTH_KEY="your_key"   # weather_api.py 만 필수
-
-python3 scripts/data_collection/kbo_scraping.py
-python3 scripts/data_collection/kbo_standings_scrape.py
-python3 scripts/data_collection/kbo_size.py
-python3 scripts/data_collection/weather_api.py
-python3 scripts/preprocessing/preprocess_attendance_weather.py
-python3 scripts/features/build_features.py
-python3 scripts/eda/run_eda.py                              # 선택
-python3 scripts/modeling/benchmark_models.py                # 3모델
-python3 scripts/modeling/evaluate_model.py                  # 선택 (RF)
-python3 scripts/modeling/tune_hyperparams.py --n-trials 50  # 선택
-```
-
-### 6. 가상환경 (macOS · 선택)
-
-```bash
-cd machine-learning-project
-python3.12 -m venv .venv
-source .venv/bin/activate
-pip install -e .
-streamlit run scripts/app/streamlit_app.py
-```
-
-### 7. macOS 문제 해결
-
-| 증상 | 해결 |
-|------|------|
-| `pyproject.toml not found` | `machine-learning-project`로 `cd` 후 `pip3 install -e .` |
-| `python3` 없음 | `brew install python@3.12` 또는 python.org 설치 |
-| `ModuleNotFoundError: common` | `pip3 install -e .` 재실행 |
-| Selenium 실패 | Google Chrome 설치 |
-
----
-
-## Windows 실행 가이드
-
-> 명령은 **`python`**, **`pip`** 기준 (없으면 `py -3.12`, `py -3.12 -m pip`).
-
-### 1. 설치 (가상환경 없음 · 권장)
-
-**PowerShell:**
-
-```powershell
-git clone https://github.com/enzun123/Machine-Learning-Project.git
-cd Machine-Learning-Project\machine-learning-project
-
-python -m pip install -U pip
+pip install -U pip
 pip install -e .
 ```
 
-이미 저장소 루트에 있다면:
+Streamlit Cloud와 동일하게 루트에서 설치하려면:
 
-```powershell
-cd machine-learning-project
-pip install -e .
-```
-
-**명령 프롬프트 (cmd)** — `cd`·`pip` 동일, 활성화만 다름 (아래 venv 참고).
-
-### 2. Streamlit 웹앱
-
-**PowerShell:**
-
-```powershell
-cd machine-learning-project
-streamlit run scripts\app\streamlit_app.py
-```
-
-**cmd:**
-
-```cmd
-cd machine-learning-project
-python -m streamlit run scripts\app\streamlit_app.py
-```
-
-- 주소: http://localhost:8501
-
-**동네예보 (선택)**
-
-PowerShell:
-
-```powershell
-$env:KMA_APIHUB_AUTH_KEY = "발급받은_키"
-```
-
-cmd:
-
-```cmd
-set KMA_APIHUB_AUTH_KEY=발급받은_키
-```
-
-또는 `machine-learning-project\.streamlit\secrets.toml` (내용은 macOS와 동일).
-
-**최근 5경기 크롤 끄기 (선택)**
-
-```powershell
-$env:STREAMLIT_WEB_RECENT = "0"
-```
-
-### 3. pytest (선택)
-
-**PowerShell / cmd:**
-
-```powershell
-cd machine-learning-project
-pip install -e ".[dev]"
-pytest
-```
-
-또는 `python -m pytest` — macOS와 동일하게 **19개** 테스트, CI는 GitHub Actions 참고.
-
-### 4. 3개 모델 학습 (Windows)
-
-**PowerShell:**
-
-```powershell
-cd machine-learning-project
-pip install -e .
-python scripts\modeling\benchmark_models.py
-```
-
-Streamlit → 사이드바 **ML 알고리즘** → RF · LGBM · XGB **전부 체크**.
-
-### 5. 전체 파이프라인 (Windows)
-
-**PowerShell** — `machine-learning-project`에서:
-
-```powershell
-cd machine-learning-project
-pip install -e .
-
-$env:KMA_APIHUB_AUTH_KEY = "your_key"
-
-python scripts\data_collection\kbo_scraping.py
-python scripts\data_collection\kbo_standings_scrape.py
-python scripts\data_collection\kbo_size.py
-python scripts\data_collection\weather_api.py
-python scripts\preprocessing\preprocess_attendance_weather.py
-python scripts\features\build_features.py
-python scripts\eda\run_eda.py
-python scripts\modeling\benchmark_models.py
-python scripts\modeling\evaluate_model.py
-python scripts\modeling\tune_hyperparams.py --n-trials 50
-```
-
-### 6. 가상환경 (Windows · 선택)
-
-**PowerShell:**
-
-```powershell
-cd machine-learning-project
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -e .
-streamlit run scripts\app\streamlit_app.py
-```
-
-`running scripts is disabled` 오류 시 (한 번만):
-
-```powershell
-Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-```
-
-**cmd:**
-
-```cmd
-cd machine-learning-project
-python -m venv .venv
-.venv\Scripts\activate.bat
-pip install -e .
-streamlit run scripts\app\streamlit_app.py
-```
-
-### 7. Windows 문제 해결
-
-| 증상 | 해결 |
-|------|------|
-| `pyproject.toml not found` | `machine-learning-project`로 `cd` 후 `pip install -e .` |
-| `cd Machine-Learning-Project\...` 실패 | 이미 루트 안 → `cd machine-learning-project` 만 |
-| `python` 인식 안 됨 | 설치 시 **Add to PATH** 또는 `py -3.12` |
-| `Activate.ps1` 거부 | `Set-ExecutionPolicy RemoteSigned -Scope CurrentUser` |
-| `streamlit` 없음 | `python -m streamlit run scripts\app\streamlit_app.py` |
-| EDA 차트 한글 □□□ | `NanumGothic` / `Malgun Gothic` 등 설치·자동 선택 (`run_eda.py`) |
-| Selenium 실패 | Chrome 설치, 백신이 chromedriver 차단 여부 확인 |
-
-**루트에서 Cloud와 동일 설치 (선택)**
-
-```powershell
+```bash
 cd Machine-Learning-Project
 pip install -r requirements.txt
 ```
 
----
-
-## 3개 모델 (RF · LGBM · XGB)
-
-| 목적 | 스크립트 | 결과 |
-|------|----------|------|
-| **3개 한 번에** 학습·비교 | `benchmark_models.py` | RF + LGBM + XGB `.joblib`, `model_benchmark.json` |
-| **RF만** | `train_model.py` | `attendance_rf_pipeline.joblib` |
-
-- **3번 따로 실행할 필요 없음** — `benchmark_models.py` 한 번이면 RF → LGBM → XGB 순서로 저장.
-- **사전 조건:** `data/processed/kbo_train_ready.csv` (없으면 `build_features.py` 또는 repo 포함 데이터).
-- **XGB:** `pip install -e .` (xgboost 기본 포함). Cloud도 루트 `requirements.txt`에 xgboost 있음.
-
-**Streamlit:** ML 알고리즘에서 여러 모델 체크 → 예측 **평균**. repo에 3개 joblib 있으면 학습 생략 가능.
-
-### 벤치마크 (테스트 287경기)
-
-| 지표 | Dummy | 구장평균 | RF | LightGBM | XGBoost |
-|------|-------|----------|-----|----------|---------|
-| MAE | 4,671 | 3,945 | 1,964 | **1,911** | 1,928 |
-| R² | -0.03 | 0.33 | 0.74 | **0.77** | 0.77 |
-
----
-
-## Streamlit Cloud
-
-| 항목 | 값 |
-|------|-----|
-| Repository | `enzun123/Machine-Learning-Project` |
-| Branch | `main` |
-| Main file | `machine-learning-project/scripts/app/streamlit_app.py` |
-| Python | 3.12 권장 |
-
-- 루트 `requirements.txt`, `packages.txt` (chromium·한글 폰트 — Linux 전용)
-- **Secrets:** 배포 관리 화면에서 `KMA_APIHUB_AUTH_KEY` 등록 (키는 repo에 커밋 금지)
-
-| 기능 | 로컬 (Mac/Win) | Cloud |
-|------|----------------|-------|
-| RF/LGBM/XGB 예측 | ✅ (xgboost 포함 설치) | ✅ |
-| 동네예보 | API 키 / secrets.toml | Secrets |
-| 최근 5경기 크롤 | Chrome (기본 ON) | 불안정 (OFF 권장) |
-
----
-
-## 자동 테스트 (CI)
-
 | 항목 | 내용 |
 |------|------|
-| 워크플로 | `.github/workflows/pytest.yml` |
-| 트리거 | `main`, `develop` 브랜치 push · pull request |
-| 환경 | Ubuntu, Python **3.11** · **3.12** |
-| 명령 | `pip install -e "./machine-learning-project[dev]"` → `pytest -q` |
+| Python | **3.10 ~ 3.12** (`.python-version`: 3.12) |
+| Chrome | KBO 크롤링·«최근 5경기» 사용 시 (로컬) |
+| 기상 API (선택) | 동네예보 — [환경 설정](#환경-설정-선택) 참고 |
 
-로컬에서 CI와 동일하게 확인:
+💡 **Tip:** repo에 `data/processed/kbo_train_ready.csv`와 `models/*.joblib`가 이미 포함되어 있으면, 크롤링·재학습 없이 **웹앱만** 바로 실행할 수 있습니다.
+
+---
+
+## Quick Start
+
+### 웹앱 실행
+
+```bash
+cd machine-learning-project
+streamlit run scripts/app/streamlit_app.py
+```
+
+브라우저: http://localhost:8501 · **Windows:** `python -m streamlit run scripts\app\streamlit_app.py`
+
+### CSV 일괄 예측
+
+사이드바 **예측 방식 → CSV 업로드 예측**에서 아래 형식의 CSV를 올립니다.
+
+| 필수 컬럼 | 설명 |
+|-----------|------|
+| `경기날짜` | `YYYY-MM-DD` |
+| `홈팀` | KBO 팀명 (예: 삼성, LG) |
+| `방문팀` | KBO 팀명 |
+| `구장` | 구장명 (예: 잠실, 대구) |
+
+**샘플 파일 (repo 포함)**
+
+- [일정 템플릿](machine-learning-project/data/external/batch_predict_schedule_template.csv) — 필수 4컬럼
+- [기상 포함 템플릿](machine-learning-project/data/external/batch_predict_feature_template.csv) — 선택: 기온·강수·습도·풍속
+
+앱 사이드바 **샘플 CSV** 버튼으로도 동일 파일을 내려받을 수 있습니다.
+
+### 모델 재학습 (3종 한 번에)
+
+```bash
+cd machine-learning-project
+python scripts/modeling/benchmark_models.py
+```
+
+→ `models/attendance_{rf,lgbm,xgb}_pipeline.joblib` + `reports/modeling/model_benchmark.json`
+
+### 테스트
 
 ```bash
 cd machine-learning-project
@@ -425,47 +121,163 @@ pytest -q
 
 ---
 
-## 모델 성능 · 스크립트 · 팀
+## 환경 설정 (선택)
 
-### Streamlit UI
+동네예보(우천 참고)를 쓰려면 [기상청 API허브](https://apihub.kma.go.kr/)에서 `KMA_APIHUB_AUTH_KEY`를 발급합니다. **키는 repo에 커밋하지 마세요.**
+
+**로컬 — `machine-learning-project/.streamlit/secrets.toml` (권장)**
+
+```toml
+KMA_APIHUB_AUTH_KEY = "발급받은_키"
+```
+
+**로컬 — 셸 환경변수**
+
+```bash
+export KMA_APIHUB_AUTH_KEY="발급받은_키"
+```
+
+Windows PowerShell: `$env:KMA_APIHUB_AUTH_KEY = "발급받은_키"`
+
+**Streamlit Cloud** — 배포 관리 → **Secrets**에 동일 키 이름으로 등록 (형식은 위와 동일).
+
+**기타 (로컬)**
+
+```bash
+export STREAMLIT_WEB_RECENT=0   # «최근 5경기 KBO 크롤» 끄기 (Cloud는 기본 OFF)
+```
+
+---
+
+## 모델 성능
+
+시계열 분할(`연도·월·ISO주차` 기준) 테스트셋 **359경기** (2025년 6–10월) · `model_benchmark.json` 기준
+
+| 모델 | MAE (명) | R² | 비고 |
+|------|----------|-----|------|
+| Dummy (전체 평균) | 4,658 | -0.04 | 베이스라인 |
+| 구장별 평균 | 3,979 | 0.32 | 베이스라인 |
+| RandomForest | 1,958 | 0.75 | Optuna 튜닝 |
+| **LightGBM** | **1,856** | **0.78** | **MAE 최우수** |
+| XGBoost | 1,884 | 0.77 | Optuna 튜닝 |
+
+- **평가 지표:** MAE (Mean Absolute Error), R²
+- **최종 선택:** LightGBM — 비선형 관계·범주형 피처 처리에 유리하고, RF/XGB 대비 MAE가 가장 낮음
+- **주요 피처 (Permutation Importance):** `matchup_prior_mean_att`, `weekday_sin`, `home_prior_mean_att`, `home_last5_mean_att`, `stadium_capacity`
+
+구장별 오차는 편차가 큼 (예: 광주 MAE ~4,248명). KIA 홈 광주는 실제 판매 상한 **20,500명** 클립을 반영.
+
+---
+
+## 데이터
+
+| 출처 | 내용 | 기간 |
+|------|------|------|
+| KBO 기록실 GraphDaily | 경기별 관중·일정·구장 | 2024–2025 |
+| 기상청 API | 일별 기온·강수·습도·풍속 | 경기일 기준 |
+| KBO 순위·구장 정보 | 승률·정원·대체 구장 | 2024–2025 |
+
+**전처리 파이프라인 요약**
+
+```
+크롤/API 수집 → 결측·중복·구장명 통일 → 날씨 병합 (final_dataset.csv)
+→ prior·날씨 bucket·승률·누수 방지 피처 (kbo_train_ready.csv)
+→ 시계열 분할 학습 → joblib 저장 → Streamlit 추론
+```
+
+주요 정제: 강수 결측 0 처리, 더블헤더 정렬, 의심 관중 제거, KIA 광주 20,500명 상한 클립
+
+---
+
+## 프로젝트 구조
+
+```
+Machine-Learning-Project/              ← git clone 루트
+├── requirements.txt                   ← Streamlit Cloud 의존성
+├── packages.txt                       ← Linux: chromium, 한글 폰트
+├── .python-version                    ← 3.12
+└── machine-learning-project/          ← ★ 모든 명령은 여기서 실행
+    ├── data/
+    │   ├── raw/                       ← KBO 관중 원본 (2024–2025)
+    │   ├── interim/                   ← 날씨 병합 중간 산출물
+    │   ├── processed/                 ← final_dataset, kbo_train_ready
+    │   └── external/                  ← 구장·순위·CSV 템플릿
+    ├── models/                        ← *.joblib
+    ├── reports/                       ← EDA·벤치마크·eval
+    ├── tests/                         ← pytest
+    └── scripts/
+        ├── data_collection/           ← KBO·KMA 크롤/API
+        ├── preprocessing/             ← 정제·병합
+        ├── features/                  ← 피처 생성
+        ├── modeling/                  ← 학습·튜닝·평가
+        ├── eda/                       ← 탐색적 분석
+        ├── app/                       ← Streamlit UI
+        └── common/                    ← 설정·구장·기상 공통 모듈
+```
+
+---
+
+## 모델링
+
+| 단계 | 스크립트 | 설명 |
+|------|----------|------|
+| 피처 | `scripts/features/build_features.py` | EDA 기반 파생 변수, **타겟 누수 방지** (경기일 이전 데이터만) |
+| 벤치마크 | `scripts/modeling/benchmark_models.py` | RF · LightGBM · XGBoost 비교·저장 |
+| 튜닝 | `scripts/modeling/tune_hyperparams.py` | Optuna + TimeSeriesSplit, MAE 최소화 |
+| 평가 | `scripts/modeling/evaluate_model.py` | 잔차·구장별 MAE·Permutation Importance |
+
+**모델 선택 이유:** 트리 기반 앙상블(RF/LGBM/XGB)은 비선형·범주형(구장·팀·요일)에 강하고, 시계열 CV로 과적합을 줄이기 쉬움. 그중 **LightGBM**이 테스트 MAE·R² 모두 최우수.
+
+Streamlit에서는 RF/LGBM/XGB를 **다중 선택 시 예측 평균**으로 표시.
+
+---
+
+## Streamlit 앱
 
 | 기능 | 설명 |
 |------|------|
-| 단일 경기 예측 | 날짜·구장·팀·**기온·강수·습도·풍속** → ML·혼잡도 |
-| ML 피처 시점 | 선택한 **경기 날짜 이전** `kbo_train_ready`만 사용 (폼·prior 누수 방지) |
-| CSV 일괄 | `경기날짜, 홈팀, 방문팀, 구장` (+ 선택: 기온·강수·습도·**풍속**) |
-| 대체 구장 | 포항·울산·청주 prior |
-| 한계 | 2024–25 학습 — 2026·미래 일정 오차 가능 |
+| 단일 경기 예측 | 날짜·구장·팀·기온·강수·습도·풍속 → ML 예측·혼잡도·액션 플랜 |
+| CSV 일괄 예측 | [샘플 CSV](#csv-일괄-예측) 업로드 → 일정별 예측 |
+| 동네예보 | 기상청 API — 우천 취소 참고 ([환경 설정](#환경-설정-선택)) |
+| 최근 5경기 차트 | 실제 vs 예측 비교 (로컬 CSV 또는 KBO 크롤) |
 
-**KIA 홈 광주:** 건축 정원 22,000 · 실제 판매·크롤 상한 **20,500** — `build_features.py`에서 관중 클립. MAE가 크게 나오는 구장은 데이터·시즌 하락 영향이 큼.
+**Streamlit Cloud:** `enzun123/Machine-Learning-Project` · main file `machine-learning-project/scripts/app/streamlit_app.py`  
+Cloud에서는 Selenium 크롤이 느리고 불안정하므로 **«최근 5경기 KBO 자동 반영» 기본 OFF** 권장.
 
-### 주요 스크립트
+---
 
-| 경로 | 역할 |
-|------|------|
-| `app/streamlit_app.py` | 메인 웹앱 |
-| `app/csv_batch_predict_ui.py` | CSV 일괄 UI |
-| `modeling/batch_feature_builder.py` | 추론 피처 (단일·CSV, Streamlit 공용) |
-| `modeling/benchmark_models.py` | 3모델 |
-| `modeling/train_model.py` | RF만 |
-| `features/build_features.py` | 피처 |
-| `eda/run_eda.py` | EDA (macOS·Windows 한글 폰트 자동) |
-| `data_collection/kbo_scraping.py` | 관중 크롤링 |
-| `common/kma_vilage_fcst.py` | 동네예보 API |
+## 한계점 (Limitations)
 
-### Git 브랜치
+- **학습 구간:** 2024–2025 데이터 — 2026·미래 일정·신규 룰 변경 시 오차 증가 가능
+- **구장별 편차:** 광주·울산 등 특정 구장 MAE가 크며, 소규모·대체 구장 데이터가 적음
+- **실시간 요인 미반영:** 선발 투수·이벤트·프로모션·PO 긴장감 등은 모델에 직접 포함되지 않음
+- **기상:** 경기 당일 실제 강우와 예보·과거 일별 기상 간 괴리 존재
+- **크롤 의존:** KBO GraphDaily·Selenium 구조 변경 시 수집 스크립트 수정 필요
 
-| 브랜치 | 용도 |
-|--------|------|
-| `main` | Cloud 배포 |
-| `develop` | 기능 통합 |
-| `feat/*` | 기능별 개발 |
+---
 
-### 팀 · 문의
+## CI
+
+GitHub Actions (`.github/workflows/pytest.yml`): `main` / `develop` push·PR 시 Ubuntu + Python 3.11·3.12에서 `pytest -q` 실행.
+
+---
+
+## 팀
 
 | 역할 | 이름 |
 |------|------|
+| 지도교수 | **이정빈** 교수님 |
+| 소속 | **선문대학교** · MIRI Machine Learning 과정 |
 | 팀장 | 허은준 (enzun123) — enzun123@gmail.com |
 | 팀원 | 김지원, 이승민, 최종원 |
 
-교육·팀 프로젝트 (KBO 관중 예측 ML).
+---
+
+## 참고 리포트
+
+| 경로 | 내용 |
+|------|------|
+| `reports/modeling/model_benchmark.json` | 3모델 벤치마크 수치 |
+| `models/eval_report.json` | RF 상세 평가·구장별 MAE |
+| `reports/eda/eda_summary.md` | EDA 인사이트 |
+| `reports/eda/feature_engineering_plan.txt` | 피처 설계·누수 방지 규칙 |
