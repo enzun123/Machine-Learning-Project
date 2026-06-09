@@ -266,8 +266,6 @@ GitHub Actions (`.github/workflows/pytest.yml`): `main` / `develop` push·PR 시
 
 | 역할 | 이름 |
 |------|------|
-| 지도교수 | **이정빈** 교수님 |
-| 소속 | **선문대학교** · MIRI Machine Learning 과정 |
 | 팀장 | 허은준 (enzun123) — enzun123@gmail.com |
 | 팀원 | 김지원, 이승민, 최종원 |
 
